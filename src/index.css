@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Smooth fonts and dark background fallback */
+html, body, #root {
+  height: 100%;
+}
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #09090b; /* zinc-950 */
+}
+
+/* Laser ring highlight that sweeps around a rounded border */
+.laser-ring {
+  --angle: 0deg;
+  position: absolute;
+  inset: -2px; /* bleed a bit outside for glow */
+  border-radius: 0.75rem; /* rounded-xl */
+  pointer-events: none;
+  z-index: 1;
+}
+.laser-ring::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px; /* border thickness */
+  background: conic-gradient(from var(--angle),
+    rgba(251,146,60,0) 0deg,
+    rgba(251,146,60,0.95) 12deg,
+    rgba(251,146,60,0) 24deg,
+    transparent 360deg);
+  /* Show only the border ring */
+  /* Mask out the inner area so only the border ring is visible */
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  filter: drop-shadow(0 0 6px rgba(251,146,60,0.6));
+  animation: laserSweep 3.2s linear infinite;
+}
+
+@keyframes laserSweep {
+  to { --angle: 360deg; }
+}
+
+/* Orange gravity orbs around the preview card */
+.gravity-orb {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  filter: blur(28px);
+  mix-blend-mode: screen;
+}
+.gravity-orb.orb-a {
+  width: 180px;
+  height: 180px;
+  top: -30px;
+  left: -30px;
+  opacity: 0.35;
+  background: radial-gradient(circle at 30% 30%, rgba(251,146,60,0.6), rgba(251,146,60,0) 65%);
+  animation: gravityDriftA 10s ease-in-out infinite alternate;
+}
+.gravity-orb.orb-b {
+  width: 220px;
+  height: 220px;
+  bottom: -40px;
+  right: -20px;
+  opacity: 0.25;
+  background: radial-gradient(circle at 70% 70%, rgba(234,88,12,0.55), rgba(234,88,12,0) 65%);
+  animation: gravityDriftB 12s ease-in-out infinite alternate;
+}
+
+@keyframes gravityDriftA {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(8px, -6px) scale(1.03); }
+}
+@keyframes gravityDriftB {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(-10px, 8px) scale(1.04); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gravity-orb { animation: none; }
+  .laser-ring::before { animation: none; }
+}

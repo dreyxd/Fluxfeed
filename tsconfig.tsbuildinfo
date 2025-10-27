@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/fluxfeedlanding.tsx","./src/components/logo.tsx","./src/components/tradingviewchart.tsx","./src/pages/fluxfeedsignals.tsx","./src/types/tradingview.d.ts","./server/index.ts"],"version":"5.6.3"}
