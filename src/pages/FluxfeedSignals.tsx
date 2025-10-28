@@ -283,9 +283,9 @@ export default function FluxfeedSignals() {
             >
               <Logo size={48} />
               <div className="leading-tight">
-                <div className="text-sm text-zinc-400">Fluxfeed</div>
-                <div className="text-lg font-semibold tracking-tight">
-                  Signals from News Sentiment
+                <div className="text-lg font-bold tracking-tight text-orange-400">Fluxfeed</div>
+                <div className="text-sm text-zinc-400">
+                  AI-Powered News → Signals
                 </div>
               </div>
             </Link>

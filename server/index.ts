@@ -538,6 +538,60 @@ app.get('/api/news/general', async (req: Request, res: Response) => {
   }
 })
 
+// Trending Headlines endpoint
+app.get('/api/news/trending', async (req: Request, res: Response) => {
+  try {
+    if (!CRYPTONEWS_API_KEY) return res.json({ items: [] })
+    const page = Math.max(1, Number(req.query.page || 1))
+    const url = `https://cryptonews-api.com/api/v1/trending-headlines?page=${page}&token=${CRYPTONEWS_API_KEY}`
+    const resApi = await fetch(url)
+    if (!resApi.ok) throw new Error(`CryptoNews trending error ${resApi.status}`)
+    const data = await resApi.json() as any
+    const articles: any[] = data?.data || data?.news || []
+    const mapped: NewsItem[] = articles.map((a) => ({
+      id: String(a.news_url || a.id || a.url || (globalThis.crypto as any)?.randomUUID?.() || `${Date.now()}-${Math.random()}`),
+      title: a.title,
+      source: a.source_name || a.source || 'Unknown',
+      url: a.news_url || a.url,
+      publishedAt: a.date || a.published_at || new Date().toISOString(),
+      tickers: Array.isArray(a.tickers) ? a.tickers : (typeof a.ticker === 'string' ? [a.ticker] : []),
+    }))
+    const filtered = mapped.filter(m => m.url && m.url.startsWith('http') && m.source && m.source !== 'Unknown')
+    const labels = await classifySentimentOpenAI(filtered.map(r => r.title))
+    const labeled = filtered.map((r, i) => ({ ...r, sentiment: labels[i]?.sentiment || 'bullish', score: labels[i]?.score ?? 0 }))
+    res.json({ items: labeled })
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'trending_error' })
+  }
+})
+
+// Sundown Digest endpoint
+app.get('/api/news/sundown', async (req: Request, res: Response) => {
+  try {
+    if (!CRYPTONEWS_API_KEY) return res.json({ items: [] })
+    const page = Math.max(1, Number(req.query.page || 1))
+    const url = `https://cryptonews-api.com/api/v1/sundown-digest?page=${page}&token=${CRYPTONEWS_API_KEY}`
+    const resApi = await fetch(url)
+    if (!resApi.ok) throw new Error(`CryptoNews sundown error ${resApi.status}`)
+    const data = await resApi.json() as any
+    const articles: any[] = data?.data || data?.news || []
+    const mapped: NewsItem[] = articles.map((a) => ({
+      id: String(a.news_url || a.id || a.url || (globalThis.crypto as any)?.randomUUID?.() || `${Date.now()}-${Math.random()}`),
+      title: a.title,
+      source: a.source_name || a.source || 'Unknown',
+      url: a.news_url || a.url,
+      publishedAt: a.date || a.published_at || new Date().toISOString(),
+      tickers: Array.isArray(a.tickers) ? a.tickers : (typeof a.ticker === 'string' ? [a.ticker] : []),
+    }))
+    const filtered = mapped.filter(m => m.url && m.url.startsWith('http') && m.source && m.source !== 'Unknown')
+    const labels = await classifySentimentOpenAI(filtered.map(r => r.title))
+    const labeled = filtered.map((r, i) => ({ ...r, sentiment: labels[i]?.sentiment || 'bullish', score: labels[i]?.score ?? 0 }))
+    res.json({ items: labeled })
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'sundown_error' })
+  }
+})
+
 // Health
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ ok: true, time: new Date().toISOString() })
