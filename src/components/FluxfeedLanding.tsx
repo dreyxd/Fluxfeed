@@ -48,6 +48,7 @@ export default function FluxfeedLanding() {
     const iv = autoRefresh ? setInterval(load, REFRESH_MS) : undefined
     return () => { cancelled = true; if (iv) clearInterval(iv) }
   }, [autoRefresh])
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       {/* NAVBAR */}
@@ -150,7 +151,9 @@ export default function FluxfeedLanding() {
       {/* NEWS LIST (preview) */}
       <section id="news" className="border-t border-zinc-900/60">
         <div className="mx-auto max-w-7xl px-4 py-12">
-          <h2 className="text-xl font-semibold">Latest News</h2>
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold">Latest News</h2>
+          </div>
           <div className="mt-6">
             <NewsListCard items={items} autoLabel={autoRefresh ? 'Live feed' : 'Paused'} onToggle={() => setAutoRefresh(a=>!a)} />
           </div>
@@ -170,7 +173,7 @@ export default function FluxfeedLanding() {
             />
             <FeatureCard
               title="AI Signals"
-              desc="Simple BUY/SELL/NEUTRAL with confidence and bullet-point rationale—no black boxes."
+              desc="Simple BUY/SELL/NEUTRAL with confidence and bullet-point rationale no black boxes."
               icon="🧠"
               iconSrc="/aisignals.png"
             />

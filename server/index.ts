@@ -3,8 +3,6 @@ import express from 'express'
 import type { Request, Response } from 'express'
 import cors from 'cors'
 
-// Use global fetch (Node 18+)
-
 const PORT = Number(process.env.PORT || 8787)
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini'
@@ -14,7 +12,8 @@ const app = express()
 app.use(cors())
 app.use(express.json())
 
-// Utilities
+// ----------------------------- Types & Utils -----------------------------
+
 type Sentiment = 'bullish' | 'bearish'
 type NewsItem = {
   id: string
@@ -45,22 +44,101 @@ function mapTickerToPair(ticker: string) {
   return map[ticker] || `${ticker}USDT`
 }
 
-// Fetch latest crypto news by one or more tickers from CryptoNews API
+// ----------------------------- CryptoNews: STAT helpers -----------------------------
+
+function mapUiWindowToStat(ui: string | undefined, sinceMinutes: number) {
+  if (ui === '24h') return 'last24hours'
+  if (ui === '7d')  return 'last7days'
+  if (ui === '30d') return 'last30days'
+  if (sinceMinutes <= 1440)  return 'last24hours'
+  if (sinceMinutes <= 10080) return 'last7days'
+  return 'last30days'
+}
+
+async function tryFetchStat(ticker: string, dateParam: string) {
+  if (!CRYPTONEWS_API_KEY) {
+    return { ok:false, score:0, count:0, bullish:0, bearish:0, drivers:[] as string[] }
+  }
+  const url = `https://cryptonews-api.com/api/v1/stat?tickers=${encodeURIComponent(
+    ticker
+  )}&date=${dateParam}&page=1&token=${CRYPTONEWS_API_KEY}`
+  try {
+    const r = await fetch(url)
+    if (!r.ok) {
+      return { ok:false, score:0, count:0, bullish:0, bearish:0, drivers:[] as string[] }
+    }
+    const j = await r.json()
+    return {
+      ok: true,
+      score: Number(j?.score ?? 0),                 // -1.5..+1.5
+      count: Number(j?.total ?? j?.items ?? j?.count ?? 0),
+      bullish: Number(j?.bullish ?? 0),
+      bearish: Number(j?.bearish ?? 0),
+      drivers: Array.isArray(j?.drivers) ? j.drivers.slice(0, 5) : [],
+    }
+  } catch {
+    return { ok:false, score:0, count:0, bullish:0, bearish:0, drivers:[] as string[] }
+  }
+}
+
+// Fallback: fetch headlines and compute a STAT-like score with time-decay
+async function fetchHeadlinesForTicker(ticker: string, sinceMinutes: number) {
+  if (!CRYPTONEWS_API_KEY) return [] as Array<{ title: string; publishedAt: string; score: number }>
+  const url = new URL('https://cryptonews-api.com/api/v1')
+  url.searchParams.set('tickers-only', ticker)
+  url.searchParams.set('items', '100')
+  url.searchParams.set('page', '1')
+  url.searchParams.set('token', CRYPTONEWS_API_KEY)
+  const r = await fetch(url.toString())
+  if (!r.ok) return []
+  const data = await r.json()
+  const arr: any[] = data?.data || data?.news || []
+  const cutoff = Date.now() - sinceMinutes * 60 * 1000
+  return arr
+    .map((a) => {
+      const t = String(a.title || '')
+      const date = new Date(a.date || a.published_at || Date.now()).toISOString()
+      const prov = (a.sentiment || '').toString().toLowerCase() // 'positive' | 'negative' | 'neutral'
+      let s = prov === 'positive' ? 0.35 : prov === 'negative' ? -0.35 : 0
+      if (!prov) {
+        const low = t.toLowerCase()
+        const pos = ['surge','rally','inflow','buy','support','breakout','approval','record','growth']
+        const neg = ['hack','dump','sell','ban','lawsuit','crash','exploit','delist','outflow','fine']
+        s = (pos.some(k => low.includes(k)) ? 0.3 : 0) - (neg.some(k => low.includes(k)) ? 0.4 : 0)
+      }
+      return { title: t, publishedAt: date, score: s }
+    })
+    .filter(x => new Date(x.publishedAt).getTime() >= cutoff)
+}
+
+function aggregateHeadlineScores(items: Array<{ title: string; publishedAt: string; score: number }>) {
+  const now = Date.now()
+  const tauMs = 6 * 60 * 60 * 1000 // 6h decay
+  let wsum = 0, wtot = 0, bull = 0, bear = 0
+  for (const it of items) {
+    const s = Math.max(-1, Math.min(1, Number(it.score) || 0))
+    const w = Math.exp(-(now - new Date(it.publishedAt).getTime()) / tauMs)
+    wsum += w * s
+    wtot += w
+    if (s > 0) bull++
+    else if (s < 0) bear++
+  }
+  const avg = wtot ? wsum / wtot : 0         // -1..1
+  const statScore = Math.max(-1.5, Math.min(1.5, avg * 1.5)) // -1.5..+1.5
+  return { score: statScore, count: items.length, bullish: bull, bearish: bear }
+}
+
+// ----------------------------- Generic News Fetch -----------------------------
+
 async function fetchCryptoNews(tickers: string | string[], sinceMinutes = 1440, opts?: { sentiment?: 'positive'|'negative'|'neutral', items?: number, page?: number }): Promise<NewsItem[]> {
   if (!CRYPTONEWS_API_KEY) return []
   const list = Array.isArray(tickers) ? tickers : [tickers]
   const url = new URL('https://cryptonews-api.com/api/v1')
-  // Use tickers-only for a single ticker, tickers-include for multiple
-  if (list.length === 1) {
-    url.searchParams.set('tickers-only', list[0])
-  } else {
-    url.searchParams.set('tickers-include', list.join(','))
-  }
+  if (list.length === 1) url.searchParams.set('tickers-only', list[0])
+  else url.searchParams.set('tickers-include', list.join(','))
   url.searchParams.set('items', String(opts?.items || 50))
   url.searchParams.set('page', String(opts?.page || 1))
-  if (opts?.sentiment) {
-    url.searchParams.set('sentiment', opts.sentiment)
-  }
+  if (opts?.sentiment) url.searchParams.set('sentiment', opts.sentiment)
   url.searchParams.set('token', CRYPTONEWS_API_KEY)
 
   const res = await fetch(url.toString())
@@ -68,13 +146,12 @@ async function fetchCryptoNews(tickers: string | string[], sinceMinutes = 1440, 
   const data = await res.json() as any
   const articles: any[] = data?.data || data?.news || []
   const mapped: NewsItem[] = articles.map((a) => {
-    const id = String(a.news_url || a.id || a.url || crypto.randomUUID())
+    const id = String(a.news_url || a.id || a.url || (globalThis.crypto as any)?.randomUUID?.() || `${Date.now()}-${Math.random()}`)
     const title = a.title
     const source = a.source_name || a.source || 'Unknown'
     const urlA = a.news_url || a.url
     const publishedAt = a.date || a.published_at || new Date().toISOString()
     const ticks = Array.isArray(a.tickers) ? a.tickers : (typeof a.ticker === 'string' ? [a.ticker] : list)
-    // Provider sentiment mapping if present
     let sentiment: Sentiment | undefined
     let score: number | undefined
     const prov = typeof a.sentiment === 'string' ? a.sentiment.toLowerCase() : undefined
@@ -83,15 +160,14 @@ async function fetchCryptoNews(tickers: string | string[], sinceMinutes = 1440, 
     else if (prov === 'neutral') { sentiment = undefined; score = 0 }
     return { id, title, source, url: urlA, publishedAt, tickers: ticks, sentiment, score }
   })
-  // Filter by since window server-side as well
   const cutoff = Date.now() - minutesToMs(sinceMinutes)
   return mapped.filter(m => new Date(m.publishedAt).getTime() >= cutoff)
 }
 
-// OpenAI classification helper
+// ----------------------------- OpenAI helper -----------------------------
+
 async function classifySentimentOpenAI(texts: string[]): Promise<{ sentiment: Sentiment; score: number }[]> {
   if (!OPENAI_API_KEY) {
-    // Heuristic fallback: simple keywords
     return texts.map((t) => {
       const low = t.toLowerCase()
       const pos = ['surge', 'rally', 'inflow', 'buy', 'support', 'breakout']
@@ -100,9 +176,6 @@ async function classifySentimentOpenAI(texts: string[]): Promise<{ sentiment: Se
       return { sentiment: score >= 0 ? 'bullish' : 'bearish', score }
     })
   }
-  // Use OpenAI responses API (compatible prompt)
-  // Some OpenAI SDKs don't support this shape; we'll use a plain fetch to /v1/classifications if available
-  // Fallback to chat prompt
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -110,46 +183,24 @@ async function classifySentimentOpenAI(texts: string[]): Promise<{ sentiment: Se
       body: JSON.stringify({
         model: OPENAI_MODEL,
         messages: [
-          { role: 'system', content: 'You label crypto headlines as bullish or bearish for the mentioned tickers. Respond with pure JSON only: an array with same length as input; each element is {"sentiment":"bullish"|"bearish","score":number between -1 and 1}.' },
+          { role: 'system', content: 'Label each headline bullish or bearish. Respond with JSON array of objects {sentiment, score:-1..1} in the same order as input.' },
           { role: 'user', content: JSON.stringify(texts) },
         ],
-        temperature: 0,
-        response_format: { type: 'json_object' }
+        temperature: 0
       })
     })
     const json = await res.json()
-    let content = json?.choices?.[0]?.message?.content || '[]'
-    // If the assistant returned an object, try to find an array in it
-    if (content.trim().startsWith('{')) {
-      const arrMatch = content.match(/\[[\s\S]*\]/)
-      if (arrMatch) content = arrMatch[0]
-    }
-    let parsed: any
-    try {
-      parsed = JSON.parse(content)
-    } catch {
-      // Heuristic fallback if JSON fails
-      return texts.map((t) => {
-        const low = t.toLowerCase()
-        const pos = ['surge', 'rally', 'inflow', 'buy', 'support', 'breakout', 'partnership', 'approval', 'growth', 'record']
-        const neg = ['hack', 'dump', 'sell', 'ban', 'lawsuit', 'crash', 'exploit', 'delist', 'outflow', 'fine']
-        const score = (pos.some((k)=>low.includes(k)) ? 0.35 : 0) - (neg.some((k)=>low.includes(k)) ? 0.45 : 0)
-        return { sentiment: score >= 0 ? 'bullish' : 'bearish', score }
-      })
-    }
-    // Normalize and cap output length
-    const out: { sentiment: Sentiment; score: number }[] = []
-    for (let i = 0; i < texts.length; i++) {
-      const it = parsed[i]
+    const content = json?.choices?.[0]?.message?.content || '[]'
+    const parsed = JSON.parse(content)
+    return texts.map((_, i) => {
+      const it = parsed?.[i] || {}
       const sRaw = String(it?.sentiment || 'bullish').toLowerCase()
       const sentiment: Sentiment = sRaw === 'bearish' ? 'bearish' : 'bullish'
       let score = Number(it?.score)
       if (!Number.isFinite(score)) score = sentiment === 'bullish' ? 0.1 : -0.1
-      out.push({ sentiment, score: Math.max(-1, Math.min(1, score)) })
-    }
-    return out
-  } catch (e) {
-    // Heuristic fallback on error
+      return { sentiment, score: Math.max(-1, Math.min(1, score)) }
+    })
+  } catch {
     return texts.map((t) => {
       const low = t.toLowerCase()
       const pos = ['surge', 'rally', 'inflow', 'buy', 'support', 'breakout']
@@ -160,7 +211,8 @@ async function classifySentimentOpenAI(texts: string[]): Promise<{ sentiment: Se
   }
 }
 
-// Compute features from an array of closing prices
+// ----------------------------- Price features (chart) -----------------------------
+
 function computeFeaturesFromCloses(closes: number[]) {
   const last = closes.at(-1) || 0
   const first = closes[0] || 0
@@ -176,7 +228,6 @@ function computeFeaturesFromCloses(closes: number[]) {
   return { last, changePct, momentum, vol }
 }
 
-// Fallback: CoinGecko price series (no API key required)
 async function fetchPriceFeaturesCoingecko(ticker: string, tf: string) {
   const idMap: Record<string,string> = {
     BTC: 'bitcoin', ETH: 'ethereum', BNB: 'binancecoin', SOL: 'solana', XRP: 'ripple', ADA: 'cardano',
@@ -185,7 +236,6 @@ async function fetchPriceFeaturesCoingecko(ticker: string, tf: string) {
     OP: 'optimism', ATOM: 'cosmos', APT: 'aptos'
   }
   const id = idMap[ticker] || ticker.toLowerCase()
-  // Map tf to days; use hourly resolution
   const daysMap: Record<string,number> = { '15m': 1, '1h': 1, '4h': 2, '1d': 7 }
   const days = daysMap[tf] || 1
   const url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=${days}&interval=hourly`
@@ -199,7 +249,6 @@ async function fetchPriceFeaturesCoingecko(ticker: string, tf: string) {
   return { pair: `${ticker}USD`, interval: tf, ...feats, source: 'coingecko' }
 }
 
-// Fetch price candles from Binance and compute simple features, falling back to CoinGecko on errors (e.g., 451)
 async function fetchPriceFeatures(ticker: string, tf: string) {
   const pair = mapTickerToPair(ticker)
   const intervalMap: Record<string,string> = { '15m':'15m','1h':'1h','4h':'4h','1d':'1d' }
@@ -212,13 +261,11 @@ async function fetchPriceFeatures(ticker: string, tf: string) {
     const closes = klines.map(k => Number(k[4]))
     const feats = computeFeaturesFromCloses(closes)
     return { pair, interval, ...feats, source: 'binance' }
-  } catch (e) {
-    // Fallback to CoinGecko if Binance is blocked or fails
+  } catch {
     return await fetchPriceFeaturesCoingecko(ticker, tf)
   }
 }
 
-// Aggregate news sentiment
 function aggregateSentiment(items: NewsItem[]) {
   const n = items.length
   if (!n) return { avg: 0, bullish: 0, bearish: 0 }
@@ -232,7 +279,9 @@ function aggregateSentiment(items: NewsItem[]) {
   return { avg: sum / n, bullish, bearish }
 }
 
-// GET /api/news?ticker=BTC&since=60
+// ----------------------------- Endpoints -----------------------------
+
+// News feed for columns
 app.get('/api/news', async (req: Request, res: Response) => {
   try {
     const tickerParam = (req.query.tickers as string | undefined) || (req.query.ticker as string | undefined) || 'BTC'
@@ -243,7 +292,6 @@ app.get('/api/news', async (req: Request, res: Response) => {
     const sentimentRaw = (req.query.sentiment as string | undefined)?.toLowerCase()
     const sentiment = (sentimentRaw === 'positive' || sentimentRaw === 'negative' || sentimentRaw === 'neutral') ? sentimentRaw : undefined
     const raw = await fetchCryptoNews(tickers, since, { sentiment: sentiment as any, items, page })
-    // Classify only items missing sentiment
     const toClassifyIdx: number[] = []
     const texts: string[] = []
     raw.forEach((r, i) => { if (!r.sentiment) { toClassifyIdx.push(i); texts.push(r.title) } })
@@ -261,114 +309,99 @@ app.get('/api/news', async (req: Request, res: Response) => {
   }
 })
 
-// GET /api/signal?ticker=BTC&tf=1h&since=60
+// Core signal used by your center card (resilient STAT + fallback)
 app.get('/api/signal', async (req: Request, res: Response) => {
   try {
-  const ticker = String(req.query.ticker || 'BTC').toUpperCase()
+    const ticker = String(req.query.ticker || 'BTC').toUpperCase()
     const tf = String(req.query.tf || '1h')
-    const since = Number(req.query.since || 60)
-    const news = await fetchCryptoNews([ticker], since)
-    // Classify only missing sentiments
-    const toClassifyIdx: number[] = []
-    const texts: string[] = []
-    news.forEach((r, i) => { if (!r.sentiment) { toClassifyIdx.push(i); texts.push(r.title) } })
-    let labels: { sentiment: Sentiment; score: number }[] = []
-    if (texts.length) labels = await classifySentimentOpenAI(texts)
-    const labeled = news.map((r, i) => {
-      if (r.sentiment) return r
-      const k = toClassifyIdx.indexOf(i)
-      const lab = k >= 0 ? labels[k] : undefined
-      return { ...r, sentiment: lab?.sentiment || 'bullish', score: lab?.score ?? 0 }
-    })
-    const agg = aggregateSentiment(labeled)
+    const since = Number(req.query.since || 1440)
+    const uiWin = (req.query.window as string | undefined)
+    const statDate = mapUiWindowToStat(uiWin, since)
+
+    if (!CRYPTONEWS_API_KEY) {
+      return res.status(500).json({ error: 'No CryptoNews API key' })
+    }
+
+    // 1) Try STAT
+    const stat = await tryFetchStat(ticker, statDate)
+
+    // 2) Fallback to headlines if STAT empty
+    let score = stat.score, count = stat.count, bullish = stat.bullish, bearish = stat.bearish
+    let method: 'stat' | 'fallback' = 'stat'
+    let drivers: string[] = stat.drivers
+
+    if (!(stat.ok && (stat.count > 0 || stat.score !== 0))) {
+      const items = await fetchHeadlinesForTicker(ticker, since)
+      const agg = aggregateHeadlineScores(items)
+      score = agg.score
+      count = agg.count
+      bullish = agg.bullish
+      bearish = agg.bearish
+      method = 'fallback'
+      drivers = []
+    }
+
+    // Price (optional, but we keep it light)
     let price
-    try {
-      price = await fetchPriceFeatures(ticker, tf)
-    } catch (e) {
-      // Price feed unavailable; degrade gracefully to news-only
-      price = { pair: mapTickerToPair(ticker), interval: tf, last: 0, changePct: 0, momentum: 0, vol: 0, source: 'unavailable' }
-    }
+    try { price = await fetchPriceFeatures(ticker, tf) } 
+    catch { price = { source: 'unavailable', last: 0, momentum: 0, changePct: 0, vol: 0 } }
 
-    // Ask OpenAI to generate signal if key present, else heuristic
+    // Map to BUY/SELL/NEUTRAL
     let status: 'BUY'|'SELL'|'NEUTRAL' = 'NEUTRAL'
-    let confidence = 50
-    let reasons: string[] = []
-    const features = { news: agg, price }
+    if (score > 0.10) status = 'BUY'
+    else if (score < -0.10) status = 'SELL'
 
-    if (OPENAI_API_KEY) {
-      try {
-        const prompt = `You are a trading assistant. Using the provided features, return a JSON object {status, confidence, reasons}.
-status in ["BUY","SELL","NEUTRAL"]. confidence 0..100. reasons 3 bullet points.
-Features: ${JSON.stringify(features)}`
-        const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` },
-          body: JSON.stringify({ model: OPENAI_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0 })
-        })
-        if (!resp.ok) throw new Error(`openai_${resp.status}`)
-        const data = await resp.json()
-        const content = data?.choices?.[0]?.message?.content || '{}'
-        const parsed = JSON.parse(content)
-        status = parsed.status || status
-        confidence = parsed.confidence ?? confidence
-        reasons = Array.isArray(parsed.reasons) ? parsed.reasons : []
-      } catch (e) {
-        // Fallback heuristics if OpenAI call fails
-        if (features.news.avg > 0.05 && features.price.momentum > 0) { status = 'BUY'; confidence = Math.min(90, 60 + Math.round((features.news.avg*100 + features.price.momentum) / 2)) }
-        else if (features.news.avg < -0.05 && features.price.momentum < 0) { status = 'SELL'; confidence = Math.min(90, 60 + Math.round((Math.abs(features.news.avg*100) + Math.abs(features.price.momentum)) / 2)) }
-        else { status = 'NEUTRAL'; confidence = 45 }
-        reasons = [
-          `News sentiment avg ${features.news.avg.toFixed(2)} (bull:${features.news.bullish}, bear:${features.news.bearish})`,
-          features.price?.source === 'unavailable' ? 'Price feed unavailable; used news-only heuristics' : `Momentum vs SMA20 ${features.price.momentum.toFixed(2)}%`,
-          features.price?.source === 'unavailable' ? '—' : `Change over window ${features.price.changePct.toFixed(2)}%`
-        ]
-      }
-    } else {
-      // Heuristic fallback
-      if (agg.avg > 0.05 && price.momentum > 0) { status = 'BUY'; confidence = Math.min(90, 60 + Math.round((agg.avg*100 + price.momentum) / 2)) }
-      else if (agg.avg < -0.05 && price.momentum < 0) { status = 'SELL'; confidence = Math.min(90, 60 + Math.round((Math.abs(agg.avg*100) + Math.abs(price.momentum)) / 2)) }
-      else { status = 'NEUTRAL'; confidence = 45 }
-      reasons = [
-        `News sentiment avg ${agg.avg.toFixed(2)} (bull:${agg.bullish}, bear:${agg.bearish})`,
-        price?.source === 'unavailable' ? 'Price feed unavailable; used news-only heuristics' : `Momentum vs SMA20 ${price.momentum.toFixed(2)}%`,
-        price?.source === 'unavailable' ? '—' : `Change over window ${price.changePct.toFixed(2)}%`
-      ]
-    }
+    // Confidence: magnitude + coverage
+    const base = Math.min(1, Math.abs(score) / 1.5) * 80
+    const coverage = Math.min(1, count / 50) * 20
+    let confidence = Math.round(base + coverage)
+    if (price?.source === 'unavailable') confidence = Math.round(confidence * 0.9)
 
-    res.json({ status, confidence, reasons, features })
+    const health = count < 10 ? 'LowCoverage' : 'Healthy'
+
+    res.json({
+      status,
+      confidence,
+      health,
+      newsScore: score,
+      count,
+      skew: { bullish, bearish },
+      drivers,
+      method,
+      window: statDate,
+      ticker,
+      tf,
+      lastUpdated: new Date().toISOString()
+    })
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || 'signal_error' })
+    res.status(500).json({ error: 'signal_error', details: e?.message || String(e) })
   }
 })
 
-// POST /api/analyze
-// Body: { ticker, tf, sinceMinutes, news?: [{ title, source, sentiment, score, publishedAt }] }
-// Returns: trade plan with entry/stop/take, confidence, chart + news reasons, and a short sentiment summary
+// Analyze (longer plan generator) – retains your logic but uses STAT when available
 app.post('/api/analyze', async (req: Request, res: Response) => {
   try {
     const body = req.body as AnalyzeRequest
     const ticker = String(body.ticker || 'BTC').toUpperCase()
     const tf = (body.tf || '1h') as '15m'|'1h'|'4h'|'1d'
     const since = Number(body.sinceMinutes || 60)
+    const statDate = mapUiWindowToStat(undefined, since)
 
-    // Use provided news if present; otherwise fetch
-    let news: NewsItem[]
-    if (Array.isArray(body.news) && body.news.length) {
-      news = body.news.map((n, idx) => ({
-        id: String(idx),
-        title: n.title,
-        source: n.source,
-        url: '',
-        publishedAt: n.publishedAt || new Date().toISOString(),
-        tickers: [ticker],
-        sentiment: n.sentiment,
-        score: n.score,
-      }))
-    } else {
-      news = await fetchCryptoNews([ticker], since)
-    }
+    // Aggregate stat (best effort)
+    const stat = await tryFetchStat(ticker, statDate)
+    const usingStat = stat.ok && (stat.count > 0 || stat.score !== 0)
 
-    // Classify only missing
+    // News list (for “Why” section)
+    const news: NewsItem[] = Array.isArray(body.news) && body.news.length
+      ? body.news.map((n, idx) => ({
+          id: String(idx),
+          title: n.title, source: n.source, url: '',
+          publishedAt: n.publishedAt || new Date().toISOString(),
+          tickers: [ticker], sentiment: n.sentiment, score: n.score
+        }))
+      : await fetchCryptoNews([ticker], since)
+
+    // Label missing with OpenAI (optional)
     const toClassifyIdx: number[] = []
     const texts: string[] = []
     news.forEach((r, i) => { if (!r.sentiment) { toClassifyIdx.push(i); texts.push(r.title) } })
@@ -383,106 +416,61 @@ app.post('/api/analyze', async (req: Request, res: Response) => {
 
     const agg = aggregateSentiment(labeled)
     let price
-    try {
-      price = await fetchPriceFeatures(ticker, tf)
-    } catch (e) {
-      price = { pair: mapTickerToPair(ticker), interval: tf, last: 0, changePct: 0, momentum: 0, vol: 0, source: 'unavailable' }
-    }
+    try { price = await fetchPriceFeatures(ticker, tf) }
+    catch { price = { pair: mapTickerToPair(ticker), interval: tf, last: 0, changePct: 0, momentum: 0, vol: 0, source: 'unavailable' } }
 
-    // Generate plan
+    const totalScore = usingStat ? stat.score : agg.avg
+    const overallSentiment = usingStat ? (totalScore >= 0 ? 'bullish' : 'bearish') : (agg.avg >= 0 ? 'bullish' : 'bearish')
+
+    // Simple plan (heuristic unless OpenAI available)
     let status: 'BUY'|'SELL'|'NEUTRAL' = 'NEUTRAL'
     let confidence = 50
-    const volFrac = Math.min(0.02, Math.max(0.005, Math.abs(price.vol) / 100)) // 0.5%..2%
-    let entry = price.last
-    let stop = price.last
-    let take = price.last
-    let chartReasons: string[] = []
-    let newsReasons: string[] = []
+    const volFrac = Math.min(0.02, Math.max(0.005, Math.abs(price.vol || 0) / 100))
+    let entry = price.last || 0, stop = entry, take = entry
+    let chartReasons: string[] = [], newsReasons: string[] = []
 
-    const newsSkew = agg.bullish - agg.bearish
-    const newsSentimentSummary = `News skew: bullish ${agg.bullish} vs bearish ${agg.bearish}, avg ${agg.avg.toFixed(2)}`
-
-    const features = { price, agg, newsTop: labeled.slice(0, 8).map(n => ({ t: n.title, s: n.sentiment, sc: n.score })) }
-
-    if (OPENAI_API_KEY) {
-      try {
-        const prompt = `You are a crypto trading assistant. Using features below, propose a trade plan as JSON:
-{
-  "action": "LONG"|"SHORT"|"NEUTRAL",
-  "entryPrice": number,
-  "stopLoss": number,
-  "takeProfit": number,
-  "confidence": 0-100,
-  "chartReasons": string[2..3],
-  "newsReasons": string[2..3],
-  "sentimentSummary": string
-}
-Features: ${JSON.stringify(features)}
-Guidelines: If momentum>0 and news avg>0 -> LONG; if momentum<0 and news avg<0 -> SHORT; else NEUTRAL. Entry ~ last price. Risk/reward ~ 1:2 using volatility as guide.`
-        const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` },
-          body: JSON.stringify({ model: OPENAI_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0 })
-        })
-        if (!resp.ok) throw new Error(`openai_${resp.status}`)
-        const data = await resp.json()
-        const content = data?.choices?.[0]?.message?.content || '{}'
-        const parsed = JSON.parse(content)
-        status = (parsed.action === 'SHORT') ? 'SELL' : (parsed.action === 'LONG' ? 'BUY' : 'NEUTRAL')
-        confidence = Number(parsed.confidence ?? confidence)
-        entry = Number(parsed.entryPrice ?? entry)
-        stop = Number(parsed.stopLoss ?? stop)
-        take = Number(parsed.takeProfit ?? take)
-        chartReasons = Array.isArray(parsed.chartReasons) ? parsed.chartReasons : []
-        newsReasons = Array.isArray(parsed.newsReasons) ? parsed.newsReasons : []
-        const sentimentSummary = String(parsed.sentimentSummary || newsSentimentSummary)
-        return res.json({
-          status,
-          confidence,
-          entryPrice: entry,
-          stopLoss: stop,
-          takeProfit: take,
-          chartReasons,
-          newsReasons,
-          sentimentSummary,
-          features: { price, news: agg }
-        })
-      } catch (e) {
-        // fall through to heuristic
-      }
+    const priceAvailable = price.source !== 'unavailable'
+    if (priceAvailable) {
+      if (totalScore > 0.1 && price.momentum > 0) { status = 'BUY'; confidence = Math.min(88, 55 + Math.round((Math.abs(totalScore)*30 + price.momentum)/2)) }
+      else if (totalScore < -0.1 && price.momentum < 0) { status = 'SELL'; confidence = Math.min(88, 55 + Math.round((Math.abs(totalScore)*30 + Math.abs(price.momentum))/2)) }
+      else { status = 'NEUTRAL'; confidence = 45 }
+    } else {
+      if (totalScore > 0.15) { status = 'BUY'; confidence = Math.min(80, 50 + Math.round(Math.abs(totalScore)*35)) }
+      else if (totalScore < -0.15) { status = 'SELL'; confidence = Math.min(80, 50 + Math.round(Math.abs(totalScore)*35)) }
+      else { status = 'NEUTRAL'; confidence = 35 }
     }
 
-    // Heuristic fallback
-  if (agg.avg > 0.05 && price.momentum > 0) { status = 'BUY'; confidence = Math.min(88, 60 + Math.round((agg.avg*100 + price.momentum)/2)) }
-  else if (agg.avg < -0.05 && price.momentum < 0) { status = 'SELL'; confidence = Math.min(88, 60 + Math.round((Math.abs(agg.avg*100) + Math.abs(price.momentum))/2)) }
-    else { status = 'NEUTRAL'; confidence = 45 }
     if (status === 'BUY') {
-      entry = price.last
       stop = entry * (1 - volFrac)
       take = entry * (1 + 2*volFrac)
-      chartReasons = [
-        price?.source === 'unavailable' ? 'Price feed unavailable; entry set to last known or market' : `Price above SMA20 by ${price.momentum.toFixed(2)}%`,
-        price?.source === 'unavailable' ? 'Using default risk sizing due to missing volatility' : `Volatility ~ ${price.vol.toFixed(2)}% suggests ${Math.round(volFrac*100)}bp stop, 2R target`
-      ]
+      chartReasons = priceAvailable
+        ? [`Price above SMA20 by ${price.momentum.toFixed(2)}%`, `Volatility ~ ${price.vol.toFixed(2)}% suggests ${Math.round(volFrac*100)}bp stop, 2R target`]
+        : ['News-based signal: strong bullish sentiment', `Sentiment score ${totalScore.toFixed(2)} > 0`]
     } else if (status === 'SELL') {
-      entry = price.last
       stop = entry * (1 + volFrac)
       take = entry * (1 - 2*volFrac)
-      chartReasons = [
-        price?.source === 'unavailable' ? 'Price feed unavailable; entry set to last known or market' : `Price below SMA20 by ${Math.abs(price.momentum).toFixed(2)}%`,
-        price?.source === 'unavailable' ? 'Using default risk sizing due to missing volatility' : `Volatility ~ ${price.vol.toFixed(2)}% suggests ${Math.round(volFrac*100)}bp stop, 2R target`
-      ]
+      chartReasons = priceAvailable
+        ? [`Price below SMA20 by ${Math.abs(price.momentum).toFixed(2)}%`, `Volatility ~ ${price.vol.toFixed(2)}% suggests ${Math.round(volFrac*100)}bp stop, 2R target`]
+        : ['News-based signal: strong bearish sentiment', `Sentiment score ${totalScore.toFixed(2)} < 0`]
     } else {
-      entry = price.last
-      stop = price.last
-      take = price.last
-      chartReasons = [price?.source === 'unavailable' ? 'Price feed unavailable; awaiting price data for chart-based decision' : `Mixed momentum (${price.momentum.toFixed(2)}%) and change (${price.changePct.toFixed(2)}%)`]
+      chartReasons = priceAvailable
+        ? [`Mixed momentum (${price.momentum.toFixed(2)}%) and change (${price.changePct.toFixed(2)}%)`]
+        : ['Neutral sentiment: balanced news signals', `Score ${totalScore.toFixed(2)} near 0`]
     }
-    newsReasons = [
-      `${agg.bullish} bullish vs ${agg.bearish} bearish headlines`,
-      `Average news score ${agg.avg.toFixed(2)}`
-    ]
-    return res.json({
+
+    newsReasons = usingStat
+      ? [
+          `Aggregate sentiment score: ${totalScore.toFixed(2)} (${overallSentiment}) from ${stat.count} items`,
+          `Recent headlines: ${agg.bullish} bullish vs ${agg.bearish} bearish`,
+          labeled.length ? `Top headline: "${labeled[0].title.substring(0, 60)}..."` : 'No recent headlines'
+        ]
+      : [
+          `${agg.bullish} bullish vs ${agg.bearish} bearish headlines`,
+          `Average news score ${agg.avg.toFixed(2)}`,
+          labeled.length ? `Top: "${labeled[0].title.substring(0, 60)}..."` : 'No headlines'
+        ]
+
+    res.json({
       status,
       confidence,
       entryPrice: entry,
@@ -490,15 +478,35 @@ Guidelines: If momentum>0 and news avg>0 -> LONG; if momentum<0 and news avg<0 -
       takeProfit: take,
       chartReasons,
       newsReasons,
-      sentimentSummary: newsSentimentSummary,
-      features: { price, news: agg }
+      sentimentSummary: usingStat
+        ? `Overall sentiment: ${overallSentiment} (score: ${totalScore.toFixed(2)} from ${stat.count} items). Recent: ${agg.bullish} bullish vs ${agg.bearish} bearish`
+        : `News skew: bullish ${agg.bullish} vs bearish ${agg.bearish}, avg ${agg.avg.toFixed(2)}`,
+      aggregateScore: totalScore,
+      aggregateSentiment: overallSentiment,
+      features: {
+        price,
+        news: agg,
+        aggregateStat: usingStat ? { score: totalScore, sentiment: overallSentiment, items: stat.count } : null
+      }
     })
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'analyze_error' })
   }
 })
 
-// GET /api/news/general?items=10&page=1
+// General sentiment/stat proxy
+app.get('/api/stat/general', async (req: Request, res: Response) => {
+  try {
+    const dateRange = (req.query.dateRange as string) || 'last30days'
+    const r = await tryFetchStat('BTC', dateRange) // use BTC as a proxy or change to 'alltickers' if your plan allows
+    if (!r.ok) return res.json({ score: 0, sentiment: 'neutral', items: 0 })
+    res.json({ score: r.score, sentiment: r.score >= 0 ? 'bullish' : 'bearish', items: r.count })
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'stat_general_error' })
+  }
+})
+
+// Landing “general” news
 app.get('/api/news/general', async (req: Request, res: Response) => {
   try {
     if (!CRYPTONEWS_API_KEY) return res.json({ items: [] })
@@ -514,16 +522,14 @@ app.get('/api/news/general', async (req: Request, res: Response) => {
     const data = await resApi.json() as any
     const articles: any[] = data?.data || data?.news || []
     const mapped: NewsItem[] = articles.map((a) => ({
-      id: String(a.news_url || a.id || a.url || crypto.randomUUID()),
+      id: String(a.news_url || a.id || a.url || (globalThis.crypto as any)?.randomUUID?.() || `${Date.now()}-${Math.random()}`),
       title: a.title,
       source: a.source_name || a.source || 'Unknown',
       url: a.news_url || a.url,
       publishedAt: a.date || a.published_at || new Date().toISOString(),
       tickers: Array.isArray(a.tickers) ? a.tickers : (typeof a.ticker === 'string' ? [a.ticker] : []),
     }))
-    // Basic quality filter: valid URL and known source
     const filtered = mapped.filter(m => m.url && m.url.startsWith('http') && m.source && m.source !== 'Unknown')
-    // Classify for bullish/bearish split on landing too
     const labels = await classifySentimentOpenAI(filtered.map(r => r.title))
     const labeled = filtered.map((r, i) => ({ ...r, sentiment: labels[i]?.sentiment || 'bullish', score: labels[i]?.score ?? 0 }))
     res.json({ items: labeled })
@@ -532,22 +538,7 @@ app.get('/api/news/general', async (req: Request, res: Response) => {
   }
 })
 
-// GET /api/tickersdb - proxy to CryptoNews tickers db (note: rate-limited)
-app.get('/api/tickersdb', async (_req: Request, res: Response) => {
-  try {
-    if (!CRYPTONEWS_API_KEY) return res.json({ items: [] })
-    const url = new URL('https://cryptonews-api.com/api/v1/account/tickersdbv2')
-    url.searchParams.set('token', CRYPTONEWS_API_KEY)
-    const r = await fetch(url.toString())
-    if (!r.ok) throw new Error(`tickersdb_${r.status}`)
-    const json = await r.json()
-    res.json(json)
-  } catch (e: any) {
-    res.status(500).json({ error: e?.message || 'tickersdb_error' })
-  }
-})
-
-// Simple health endpoint
+// Health
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ ok: true, time: new Date().toISOString() })
 })

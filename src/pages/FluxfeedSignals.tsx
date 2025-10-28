@@ -1,16 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import TradingViewChart from "../components/TradingViewChart";
 import Logo from "../components/Logo";
-import { Link } from "react-router-dom";
-
-// Fluxfeed – Crypto Signals from News Sentiment (UI/UX prototype)
-// Notes:
-// - Self-contained React component with Tailwind CSS classes.
-// - No external UI libraries; easy to port into Next.js app/page.
-// - TradingView area is a placeholder <div>. Replace with your TV widget later.
-// - Mock data + timers simulate real-time updates.
-// - Dark theme with orange accent to match your preference.
-// - Accessible: semantic regions, aria-labels, focus states, keyboard support.
+import { Link, useSearchParams } from "react-router-dom";
 
 // ----------------------------- Utility Types -----------------------------
 
@@ -21,55 +12,40 @@ type NewsItem = {
   title: string;
   source: string;
   url: string;
-  publishedAt: string; // ISO string
+  publishedAt: string; // ISO
   tickers: string[];
   sentiment: Sentiment;
-  score: number; // -1 to 1
+  score: number; // -1..1
 };
 
 type Signal = {
   status: "BUY" | "SELL" | "NEUTRAL";
-  confidence: number; // 0..100
-  reason: string[]; // bullet points
-  updatedAt: string;
+  confidence: number;              // 0..100
+  newsScore: number;               // -1.5..+1.5 (STAT-compatible)
+  count: number;                   // items used for the score
+  skew: { bullish: number; bearish: number };
+  drivers: string[];
+  health: "Healthy" | "LowCoverage";
+  method: "stat" | "fallback";
+  window: string;                  // last24hours|last7days|last30days (or UI alias)
+  lastUpdated: string;             // ISO
   ticker: string;
-  timeframe: string; // e.g., "1h"
-  entryPrice?: number;
-  stopLoss?: number;
-  takeProfit?: number;
+  timeframe: string;
 };
 
-// ----------------------------- Mock Data -----------------------------
+// ----------------------------- Constants -----------------------------
 
-const START_NEWS: NewsItem[] = []
+const START_NEWS: NewsItem[] = [];
 
 const TICKER_OPTIONS = [
-  "BTC",
-  "ETH",
-  "BNB",
-  "SOL",
-  "XRP",
-  "ADA",
-  "DOGE",
-  "AVAX",
-  "TRX",
-  "DOT",
-  "LINK",
-  "MATIC",
-  "LTC",
-  "BCH",
-  "TON",
-  "ARB",
-  "OP",
-  "ATOM",
-  "APT",
+  "BTC","ETH","BNB","SOL","XRP","ADA","DOGE","AVAX","TRX","DOT",
+  "LINK","MATIC","LTC","BCH","TON","ARB","OP","ATOM","APT"
 ];
 
-// Removed separate timeframe category control; TradingView provides timeframe UI.
+// ----------------------------- Helpers -----------------------------
 
-// ----------------------------- Helper Fns -----------------------------
-
-function timeAgo(iso: string) {
+function timeAgo(iso?: string) {
+  if (!iso) return "—";
   const diff = Date.now() - new Date(iso).getTime();
   const s = Math.max(1, Math.round(diff / 1000));
   if (s < 60) return `${s}s ago`;
@@ -89,53 +65,98 @@ function cn(...xs: (string | false | undefined)[]) {
   return xs.filter(Boolean).join(" ");
 }
 
-// ----------------------------- Main UI -----------------------------
+function timeframeToInterval(tf: string): string {
+  switch (tf) {
+    case "15m": return "15";
+    case "1h":  return "60";
+    case "4h":  return "240";
+    case "1d":  return "D";
+    default:    return "60";
+  }
+}
+
+function getTvSymbol(ticker: string): string {
+  const map: Record<string, string> = {
+    BTC: "COINBASE:BTCUSD", ETH: "COINBASE:ETHUSD", BNB: "BINANCE:BNBUSDT", SOL: "COINBASE:SOLUSD",
+    XRP: "BITSTAMP:XRPUSD", ADA: "COINBASE:ADAUSD", DOGE: "BINANCE:DOGEUSDT", AVAX: "COINBASE:AVAXUSD",
+    TRX: "BINANCE:TRXUSDT", DOT: "COINBASE:DOTUSD", LINK: "COINBASE:LINKUSD", MATIC: "COINBASE:MATICUSD",
+    LTC: "COINBASE:LTCUSD", BCH: "COINBASE:BCHUSD", TON: "BINANCE:TONUSDT", ARB: "BINANCE:ARBUSDT",
+    OP: "BINANCE:OPUSDT", ATOM: "COINBASE:ATOMUSD", APT: "BINANCE:APTUSDT",
+  };
+  return map[ticker] ?? `COINBASE:${ticker}USD`;
+}
+
+function windowToMinutes(w: string) {
+  switch (w) {
+    case "15m": return 15;
+    case "1h":  return 60;
+    case "4h":  return 240;
+    case "24h": return 1440;
+    case "7d":  return 10080;
+    case "30d": return 43200;
+    default:    return 1440;
+  }
+}
+
+// ----------------------------- Main -----------------------------
 
 export default function FluxfeedSignals() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const [news, setNews] = useState<NewsItem[]>(START_NEWS);
   const [ticker, setTicker] = useState<string>("BTC");
-  // Default chart timeframe; users can change inside TradingView widget UI.
-  const [timeframe] = useState<string>("1h");
-  const [since, setSince] = useState<string>("24h"); // news time filter
+  const [timeframe] = useState<string>("1h"); // TV widget controls user-facing TF
+  const [windowSel, setWindowSel] = useState<string>(searchParams.get("window") || "24h");
   const [query, setQuery] = useState<string>("");
-  const [autoRefresh, setAutoRefresh] = useState<boolean>(true)
-  const [manualTick, setManualTick] = useState<number>(0)
-  const [refreshMs, setRefreshMs] = useState<number>(30000)
+  const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
+  const [manualTick, setManualTick] = useState<number>(0);
+  const [refreshMs, setRefreshMs] = useState<number>(30000);
+  const [selectedAI, setSelectedAI] = useState<string>(searchParams.get("ai") || "fluxai");
+  const [showToast, setShowToast] = useState<string | null>(null);
 
+  // signal state
   const [signal, setSignal] = useState<Signal>({
     status: "NEUTRAL",
     confidence: 0,
-    reason: [],
-    updatedAt: new Date().toISOString(),
+    newsScore: 0,
+    count: 0,
+    skew: { bullish: 0, bearish: 0 },
+    drivers: [],
+    health: "Healthy",
+    method: "stat",
+    window: "last24hours",
+    lastUpdated: "",
     ticker: "BTC",
     timeframe: "1h",
   });
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
-  type ChatMessage = { role: 'assistant' | 'system'; content: string; time: string }
-  const [chat, setChat] = useState<ChatMessage[]>([])
-  const [analysisLoading, setAnalysisLoading] = useState(false)
-  const [analysisMeta, setAnalysisMeta] = useState<{ sentimentSummary?: string; chartReasons?: string[]; newsReasons?: string[] }>({})
-  const [analysisError, setAnalysisError] = useState<string | null>(null)
-
-  function sinceToMinutes(s: string) {
-    switch (s) {
-      case '15m': return 15
-      case '1h': return 60
-      case '4h': return 240
-      default: return 1440
-    }
-  }
-
-  // Fetch real news from our API (auto-refresh with merge)
+  // keep URL in sync without dropping other params
   useEffect(() => {
-    let cancelled = false
-    const REFRESH_MS = refreshMs
-    async function load() {
+    const p = new URLSearchParams(searchParams);
+    p.set("ai", selectedAI);
+    p.set("window", windowSel);
+    setSearchParams(p, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAI, windowSel]);
+
+  // toast auto-hide
+  useEffect(() => {
+    if (!showToast) return;
+    const t = setTimeout(() => setShowToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [showToast]);
+
+  // Load news
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
       try {
-        const mins = sinceToMinutes(since)
-        const res = await fetch(`/api/news?ticker=${encodeURIComponent(ticker)}&since=${mins}`)
-        const json = await res.json()
-        if (cancelled) return
+        const mins = windowToMinutes(windowSel);
+        const res = await fetch(`/api/news?ticker=${encodeURIComponent(ticker)}&since=${mins}`);
+        const json = await res.json();
+        if (cancelled) return;
         const items: NewsItem[] = (json.items || []).map((r: any) => ({
           id: r.id,
           title: r.title,
@@ -143,137 +164,134 @@ export default function FluxfeedSignals() {
           url: r.url,
           publishedAt: r.publishedAt,
           tickers: Array.isArray(r.tickers) ? r.tickers : [ticker],
-          sentiment: (r.sentiment === 'bearish' ? 'bearish' : 'bullish'),
-          score: typeof r.score === 'number' ? r.score : 0,
-        }))
+          sentiment: r.sentiment === "bearish" ? "bearish" : "bullish",
+          score: typeof r.score === "number" ? r.score : 0,
+        }));
         setNews((prev) => {
-          const existing = new Map(prev.map(p => [p.id, p]))
-          for (const it of items) {
-            if (!existing.has(it.id)) existing.set(it.id, it)
-          }
-          const merged = Array.from(existing.values())
-          merged.sort((a,b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
-          return merged.slice(0, 200)
-        })
-      } catch (e) {
-        // ignore errors; keep current list
+          const map = new Map(prev.map((p) => [p.id, p]));
+          for (const it of items) map.set(it.id, it);
+          const merged = Array.from(map.values());
+          merged.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+          return merged.slice(0, 200);
+        });
+      } catch {
+        /* ignore */
       }
-    }
-    // always load once (manual tick triggers here too)
-    load()
-    // set interval only if auto-refresh enabled
-    const iv = autoRefresh ? setInterval(load, REFRESH_MS) : undefined
-    return () => { cancelled = true; if (iv) clearInterval(iv) }
-  }, [ticker, since, autoRefresh, manualTick, refreshMs])
+    };
+    load();
+    const iv = autoRefresh ? setInterval(load, refreshMs) : undefined;
+    return () => {
+      cancelled = true;
+      if (iv) clearInterval(iv);
+    };
+  }, [ticker, windowSel, autoRefresh, manualTick, refreshMs]);
 
-  // Fetch AI signal from our API
+  // Load AI signal (news-only FluxAI)
   useEffect(() => {
-    let cancelled = false
-    const REFRESH_MS = refreshMs
-    async function load() {
+    if (selectedAI !== "fluxai") return;
+    let cancelled = false;
+    const load = async () => {
+      setAnalysisLoading(true);
+      setAnalysisError(null);
       try {
-        const mins = sinceToMinutes(since)
-        const res = await fetch(`/api/signal?ticker=${encodeURIComponent(ticker)}&tf=${encodeURIComponent(timeframe)}&since=${mins}`)
-        const json = await res.json()
-        if (cancelled) return
+        const mins = windowToMinutes(windowSel);
+        const res = await fetch(
+          `/api/signal?ticker=${encodeURIComponent(ticker)}&tf=${encodeURIComponent(timeframe)}&since=${mins}&window=${encodeURIComponent(windowSel)}`
+        );
+        const json = await res.json();
+        if (cancelled) return;
         if (json && !json.error) {
           setSignal({
-            status: json.status || 'NEUTRAL',
+            status: json.status || "NEUTRAL",
             confidence: clamp(Number(json.confidence) || 0, 0, 100),
-            reason: Array.isArray(json.reasons) ? json.reasons : [],
-            updatedAt: new Date().toISOString(),
+            newsScore: Number(json.newsScore ?? 0),
+            count: Number(json.count ?? 0),
+            skew: { bullish: Number(json.skew?.bullish ?? 0), bearish: Number(json.skew?.bearish ?? 0) },
+            drivers: Array.isArray(json.drivers) ? json.drivers : [],
+            health: json.health === "LowCoverage" ? "LowCoverage" : "Healthy",
+            method: json.method === "fallback" ? "fallback" : "stat",
+            window: json.window || "last24hours",
+            lastUpdated: json.lastUpdated || new Date().toISOString(),
             ticker,
             timeframe,
-          })
+          });
+        } else {
+          setAnalysisError(json?.error || "Failed to fetch signal");
         }
       } catch (e) {
-        // ignore
+        setAnalysisError(e instanceof Error ? e.message : "Network error");
+        setSignal((prev) => ({ ...prev, health: "LowCoverage" }));
+      } finally {
+        setAnalysisLoading(false);
       }
-    }
-    load()
-    const iv = autoRefresh ? setInterval(load, REFRESH_MS) : undefined
-    return () => { cancelled = true; if (iv) clearInterval(iv) }
-  }, [ticker, timeframe, since, autoRefresh, manualTick, refreshMs])
+    };
+    load();
+    const iv = autoRefresh ? setInterval(load, refreshMs) : undefined;
+    return () => {
+      cancelled = true;
+      if (iv) clearInterval(iv);
+    };
+  }, [ticker, timeframe, windowSel, autoRefresh, manualTick, refreshMs, selectedAI]);
 
   // Filters
   const filtered = useMemo(() => {
-    const minMs = since === "15m" ? 15 * 60 * 1000 : since === "1h" ? 60 * 60 * 1000 : since === "4h" ? 4 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const minMs = windowToMinutes(windowSel) * 60 * 1000;
     const cutoff = Date.now() - minMs;
     return news.filter((n) => {
-      // Strict match: only include headlines containing the selected ticker
       const matchesTicker = n.tickers.includes(ticker);
       const matchesTime = new Date(n.publishedAt).getTime() >= cutoff;
       const matchesQuery = !query || n.title.toLowerCase().includes(query.toLowerCase());
       return matchesTicker && matchesTime && matchesQuery;
     });
-  }, [news, ticker, since, query]);
+  }, [news, ticker, windowSel, query]);
 
   const bearish = filtered.filter((n) => n.sentiment === "bearish");
   const bullish = filtered.filter((n) => n.sentiment === "bullish");
 
-  // TradingView symbol mapping per selected ticker
   const tvSymbol = useMemo(() => getTvSymbol(ticker), [ticker]);
   const tvInterval = useMemo(() => timeframeToInterval(timeframe), [timeframe]);
 
-  // ----------------------------- Layout -----------------------------
-  async function startAnalysis() {
-    try {
-      setAnalysisLoading(true)
-      setAnalysisError(null)
-      const payload = {
-        ticker,
-        tf: timeframe as '1h'|'15m'|'4h'|'1d',
-        sinceMinutes: sinceToMinutes(since),
-        news: filtered.map(n => ({ title: n.title, source: n.source, sentiment: n.sentiment, score: n.score, publishedAt: n.publishedAt }))
-      }
-      const resp = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      if (!resp.ok) {
-        const text = await resp.text()
-        throw new Error(text || `Analyze error ${resp.status}`)
-      }
-      const json = await resp.json()
-      if (json && !json.error) {
-        const status = json.status || 'NEUTRAL'
-        const confidence = clamp(Number(json.confidence) || 0, 0, 100)
-        const entry = Number(json.entryPrice || 0)
-        const stop = Number(json.stopLoss || 0)
-        const take = Number(json.takeProfit || 0)
-        const chartReasons = Array.isArray(json.chartReasons) ? json.chartReasons : []
-        const newsReasons = Array.isArray(json.newsReasons) ? json.newsReasons : []
-        const sentimentSummary = String(json.sentimentSummary || '')
-        setSignal(s => ({ ...s, status, confidence, entryPrice: entry, stopLoss: stop, takeProfit: take, updatedAt: new Date().toISOString(), ticker, timeframe }))
-        setAnalysisMeta({ sentimentSummary, chartReasons, newsReasons })
-        const pretty = `${status === 'BUY' ? 'LONG' : status === 'SELL' ? 'SHORT' : 'NEUTRAL'} ${ticker} @ ${entry ? entry.toFixed(2) : 'mkt'} | SL ${stop ? stop.toFixed(2) : '-'} | TP ${take ? take.toFixed(2) : '-' } | Conf ${confidence}%\n` +
-          (sentimentSummary ? `News: ${sentimentSummary}\n` : '') +
-          (chartReasons.length ? `Chart: • ${chartReasons.join(' • ')}\n` : '') +
-          (newsReasons.length ? `Headlines: • ${newsReasons.join(' • ')}` : '')
-        setChat([{ role: 'assistant', content: pretty, time: new Date().toISOString() }])
-      } else if (json && json.error) {
-        setAnalysisError(String(json.error))
-      }
-    } catch (e) {
-      setAnalysisError(e instanceof Error ? e.message : 'Analysis failed')
-    } finally {
-      setAnalysisLoading(false)
-    }
+  // Manual refresh triggers both news + signal hooks
+  function refreshAnalysis() {
+    setManualTick((t) => t + 1);
   }
+
+  // Build analysis meta from current signal
+  const analysisMeta = useMemo(() => {
+    const score = signal.newsScore;
+    const aggSent =
+      score > 0.05 ? "bullish" : score < -0.05 ? "bearish" : "neutral";
+    return {
+      aggregateScore: score,
+      aggregateSentiment: aggSent,
+      sentimentSummary: `Aggregated news score ${score.toFixed(2)} (${signal.window}); skew ${signal.skew.bullish} bullish vs ${signal.skew.bearish} bearish from ${signal.count} items.`,
+      newsReasons: (signal.drivers || []).slice(0, 3),
+    };
+  }, [signal]);
+
+  // ----------------------------- Render -----------------------------
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      {/* Top Bar Filters */}
+      {/* Top Bar */}
       <header className="sticky top-0 z-30 border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur">
         <div className="mx-auto max-w-7xl px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <Link to="/" className="flex items-center gap-3 rounded-lg transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-orange-600">
+            <Link
+              to="/"
+              className="flex items-center gap-3 rounded-lg transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-orange-600"
+            >
               <Logo size={48} />
               <div className="leading-tight">
                 <div className="text-sm text-zinc-400">Fluxfeed</div>
-                <div className="text-lg font-semibold tracking-tight">Signals from News Sentiment</div>
+                <div className="text-lg font-semibold tracking-tight">
+                  Signals from News Sentiment
+                </div>
               </div>
             </Link>
 
             <div className="flex flex-1 flex-wrap items-center justify-end gap-2 md:gap-3">
-              {/* Ticker Select */}
+              {/* Ticker */}
               <label className="sr-only" htmlFor="ticker">Ticker</label>
               <select
                 id="ticker"
@@ -286,18 +304,16 @@ export default function FluxfeedSignals() {
                 ))}
               </select>
 
-              {/* Timeframe select removed — handled by TradingView UI */}
-
-              {/* News time filter */}
-              <label className="sr-only" htmlFor="since">News window</label>
+              {/* News window */}
+              <label className="sr-only" htmlFor="window">News window</label>
               <select
-                id="since"
-                value={since}
-                onChange={(e) => setSince(e.target.value)}
+                id="window"
+                value={windowSel}
+                onChange={(e) => setWindowSel(e.target.value)}
                 className="h-10 rounded-xl border border-zinc-800 bg-zinc-900 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-orange-600"
               >
-                {["15m", "1h", "4h", "24h"].map((t) => (
-                  <option key={t} value={t}>{t} news</option>
+                {["15m", "1h", "4h", "24h", "7d", "30d"].map((t) => (
+                  <option key={t} value={t}>{t} window</option>
                 ))}
               </select>
 
@@ -342,7 +358,7 @@ export default function FluxfeedSignals() {
 
               {/* Manual refresh */}
               <button
-                onClick={() => setManualTick((t) => t + 1)}
+                onClick={refreshAnalysis}
                 className="h-10 rounded-xl border border-zinc-800 bg-zinc-900 px-3 text-sm text-zinc-200 hover:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-orange-600"
                 title="Refresh now"
               >
@@ -353,7 +369,7 @@ export default function FluxfeedSignals() {
         </div>
       </header>
 
-      {/* TradingView Chart Area */}
+      {/* Chart */}
       <section aria-label="Chart" className="border-b border-zinc-900/60">
         <div className="mx-auto max-w-7xl px-4">
           <div className="mt-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3">
@@ -368,23 +384,99 @@ export default function FluxfeedSignals() {
         </div>
       </section>
 
-      {/* Three-Column Sentiment + AI Signals */}
+      {/* Toast */}
+      {showToast && (
+        <div className="fixed top-20 right-4 z-50">
+          <div className="rounded-xl border border-yellow-800/40 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-200 shadow-lg">
+            {showToast}
+          </div>
+        </div>
+      )}
+
+      {/* AI Selector */}
+      <section className="mx-auto max-w-7xl px-4 pt-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-zinc-500">AI Model:</span>
+          {[
+            { id: "fluxai", label: "FluxAI", available: true },
+            { id: "fluxai-charts", label: "FluxAI + Charts", available: false },
+            { id: "gpt5", label: "GPT-5 Analyst", available: false },
+            { id: "claude", label: "Claude Sonnet 4.5", available: false },
+            { id: "llama", label: "Llama 3.1", available: false },
+            { id: "mistral", label: "Mistral Large", available: false },
+            { id: "ensemble", label: "Ensemble", available: false },
+            { id: "fast-mini", label: "Fast Mini", available: false },
+          ].map((m) => {
+            const selected = selectedAI === m.id && m.available;
+            return (
+              <button
+                key={m.id}
+                onClick={() => {
+                  if (m.available) {
+                    const p = new URLSearchParams(searchParams);
+                    p.set("ai", m.id);
+                    setSearchParams(p, { replace: true });
+                    setSelectedAI(m.id);
+                  } else {
+                    setShowToast("Not available yet—using FluxAI.");
+                  }
+                }}
+                disabled={!m.available}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition",
+                  selected
+                    ? "border-orange-600 bg-orange-600/20 text-orange-300"
+                    : m.available
+                    ? "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800"
+                    : "cursor-not-allowed border-zinc-800 bg-zinc-900/50 text-zinc-600"
+                )}
+                title={m.available ? "" : "Coming soon"}
+              >
+                {m.label}
+                {!m.available && (
+                  <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
+                    Coming soon
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Three Columns */}
       <main className="mx-auto max-w-7xl px-4 py-4">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          {/* Bearish Column */}
-          <NewsColumn title="Bearish" items={bearish} accent="bearish" emptyHint="No bearish headlines match your filters." autoLabel={autoRefresh ? 'Auto-refresh On' : 'Auto-refresh Off'} />
+          <NewsColumn
+            title="Bearish"
+            items={bearish}
+            accent="bearish"
+            emptyHint="No bearish headlines match your filters."
+            autoLabel={autoRefresh ? "Auto-refresh On" : "Auto-refresh Off"}
+          />
 
-          {/* Center AI Signal */}
-          <SignalCenter signal={signal} onStart={startAnalysis} chat={chat} analysisMeta={analysisMeta} loading={analysisLoading} error={analysisError} />
+          <SignalCenter
+            signal={signal}
+            onStart={refreshAnalysis}
+            onRefresh={refreshAnalysis}
+            hasAnalysis={signal.count > 0 || signal.confidence > 0 || Boolean(signal.lastUpdated)}
+            analysisMeta={analysisMeta}
+            loading={analysisLoading}
+            error={analysisError}
+          />
 
-          {/* Bullish Column */}
-          <NewsColumn title="Bullish" items={bullish} accent="bullish" emptyHint="No bullish headlines match your filters." autoLabel={autoRefresh ? 'Auto-refresh On' : 'Auto-refresh Off'} />
+          <NewsColumn
+            title="Bullish"
+            items={bullish}
+            accent="bullish"
+            emptyHint="No bullish headlines match your filters."
+            autoLabel={autoRefresh ? "Auto-refresh On" : "Auto-refresh Off"}
+          />
         </div>
       </main>
 
-      {/* Footer */}
       <footer className="mx-auto max-w-7xl px-4 pb-10 pt-2 text-center text-xs text-zinc-500">
-        Built with ❤️ for traders. This is a UI prototype. Wire up your Crypto News API + TradingView in code.
+        Built with ❤️ for traders.
       </footer>
     </div>
   );
@@ -426,26 +518,30 @@ function NewsColumn({
         <h3
           className={cn(
             "text-sm font-semibold uppercase tracking-wide",
-            accent === "bearish" && "text-rose-300",
-            accent === "bullish" && "text-emerald-300"
+            accent === "bearish" ? "text-rose-300" : "text-emerald-300"
           )}
         >
           {title}
         </h3>
-        <div className="text-xs text-zinc-500">{autoLabel ?? 'Auto-updating'}</div>
+        <div className="text-xs text-zinc-500">{autoLabel ?? "Auto-updating"}</div>
       </div>
       <ul className="max-h-[720px] divide-y divide-zinc-800 overflow-y-auto">
-        {items.length === 0 && (
-          <li className="p-4 text-sm text-zinc-400">{emptyHint}</li>
-        )}
+        {items.length === 0 && <li className="p-4 text-sm text-zinc-400">{emptyHint}</li>}
         {items.map((n) => (
           <li key={n.id} className="group flex items-start gap-3 p-4 hover:bg-zinc-900/60">
-            <div className={cn(
-              "mt-0.5 h-2 w-2 shrink-0 rounded-full",
-              n.sentiment === "bullish" ? "bg-emerald-400" : "bg-rose-400"
-            )} />
+            <div
+              className={cn(
+                "mt-0.5 h-2 w-2 shrink-0 rounded-full",
+                n.sentiment === "bullish" ? "bg-emerald-400" : "bg-rose-400"
+              )}
+            />
             <div className="min-w-0">
-              <a href={n.url} target="_blank" rel="noreferrer" className="line-clamp-2 font-medium text-zinc-100 underline-offset-2 hover:underline">
+              <a
+                href={n.url}
+                target="_blank"
+                rel="noreferrer"
+                className="line-clamp-2 font-medium text-zinc-100 underline-offset-2 hover:underline"
+              >
                 {n.title}
               </a>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
@@ -471,36 +567,92 @@ function NewsColumn({
   );
 }
 
-function SignalCenter({ signal, onStart, chat, analysisMeta, loading, error }: { signal: Signal; onStart: () => void; chat?: { role: 'assistant'|'system'; content: string; time: string }[]; analysisMeta?: { sentimentSummary?: string; chartReasons?: string[]; newsReasons?: string[] }; loading?: boolean; error?: string | null }) {
+function SignalCenter({
+  signal,
+  onStart,
+  onRefresh,
+  hasAnalysis,
+  analysisMeta,
+  loading,
+  error,
+}: {
+  signal: Signal;
+  onStart?: () => void;
+  onRefresh?: () => void;
+  hasAnalysis?: boolean;
+  analysisMeta?: {
+    sentimentSummary?: string;
+    chartReasons?: string[];
+    newsReasons?: string[];
+    aggregateScore?: number;
+    aggregateSentiment?: "bullish" | "bearish" | "neutral" | string;
+  };
+  loading?: boolean;
+  error?: string | null;
+}) {
   const statusColor =
     signal.status === "BUY" ? "text-emerald-400" : signal.status === "SELL" ? "text-rose-400" : "text-zinc-300";
+
+  const scoreColor = (score?: number) => {
+    if (score === undefined) return "text-zinc-400";
+    if (score > 0.5) return "text-emerald-400";
+    if (score > 0) return "text-emerald-500";
+    if (score < -0.5) return "text-rose-400";
+    if (score < 0) return "text-rose-500";
+    return "text-zinc-400";
+  };
+
+  const showStart = !(hasAnalysis ?? (signal.count > 0 || signal.confidence > 0 || Boolean(signal.lastUpdated)));
+
+  const barPct = Math.min(100, Math.abs(((analysisMeta?.aggregateScore ?? 0) / 1.5) * 100));
+  const barLeft = Math.max(0, 50 - barPct / 2);
+  const barRight = Math.max(0, 50 - barPct / 2);
 
   return (
     <section aria-label="AI trading signal" className="rounded-2xl border border-zinc-800 bg-zinc-900/40">
       <div className="flex items-center justify-between gap-2 border-b border-zinc-800 px-4 py-3">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-200">FluxAI</h3>
-        <div className="flex items-center gap-2 text-xs text-zinc-500">
-          <span>Updated {timeAgo(signal.updatedAt)}</span>
-          <button
-            onClick={onStart}
-            className="rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-orange-600"
-          >
-            {loading ? 'Analyzing…' : 'Start Analysis'}
-          </button>
+        <div className="text-xs text-zinc-500">
+          <span>Updated {timeAgo(signal.lastUpdated)}</span>
         </div>
       </div>
 
       <div className="space-y-4 p-4">
-        {/* Centered Start CTA when no analysis yet */}
-        {(!chat || chat.length === 0) && !loading && (
+        {/* CTA */}
+        {!loading && (
           <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950/40 p-6 text-center">
-            <div className="text-sm text-zinc-400">FluxAI is ready to analyze headlines and the chart.</div>
-            <button
-              onClick={onStart}
-              className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-600"
-            >
-              Start
-            </button>
+            {showStart ? (
+              <>
+                <div className="text-sm text-zinc-400">FluxAI is ready to analyze headlines.</div>
+                <button
+                  onClick={onStart}
+                  className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-600"
+                >
+                  Start Analysis
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="text-sm text-zinc-400">
+                  Analysis complete. Click refresh to re-analyze with latest news.
+                </div>
+                <button
+                  onClick={onRefresh}
+                  className="rounded-xl bg-zinc-700 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-600 focus:outline-none focus:ring-2 focus:ring-orange-600"
+                >
+                  Refresh Analysis
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {loading && (
+          <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950/40 p-6 text-center">
+            <div className="text-sm text-zinc-400">Analyzing...</div>
+            <div className="h-1 w-32 overflow-hidden rounded-full bg-zinc-800">
+              <div className="h-full w-1/2 animate-pulse bg-orange-600"></div>
+            </div>
           </div>
         )}
 
@@ -508,6 +660,7 @@ function SignalCenter({ signal, onStart, chat, analysisMeta, loading, error }: {
           <div className="rounded-lg border border-rose-800/40 bg-rose-900/20 p-3 text-sm text-rose-200">{error}</div>
         )}
 
+        {/* Signal header */}
         <div className="flex items-center justify-between">
           <div>
             <div className={cn("text-4xl font-black tracking-tight", statusColor)}>{signal.status}</div>
@@ -521,114 +674,99 @@ function SignalCenter({ signal, onStart, chat, analysisMeta, loading, error }: {
           </div>
         </div>
 
-        {/* Trade plan */}
-        {signal.entryPrice && signal.stopLoss && signal.takeProfit && (
-          <div className="grid grid-cols-3 gap-2 text-sm">
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
-              <div className="text-xs uppercase text-zinc-500">Entry</div>
-              <div className="font-semibold text-zinc-100">{signal.entryPrice.toFixed(2)}</div>
+        {/* Aggregate Sentiment */}
+        {analysisMeta && analysisMeta.aggregateScore !== undefined && (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="mb-1 text-xs uppercase text-zinc-500">Aggregated News Sentiment</div>
+                <div className="flex items-baseline gap-2">
+                  <span className={cn("text-2xl font-bold", scoreColor(analysisMeta.aggregateScore))}>
+                    {analysisMeta.aggregateScore > 0 ? "+" : ""}
+                    {analysisMeta.aggregateScore.toFixed(2)}
+                  </span>
+                  <span className="text-sm text-zinc-500">/ ±1.5</span>
+                </div>
+              </div>
+              <div className="text-right">
+                <div
+                  className={cn(
+                    "text-lg font-semibold capitalize",
+                    analysisMeta.aggregateSentiment === "bullish"
+                      ? "text-emerald-400"
+                      : analysisMeta.aggregateSentiment === "bearish"
+                      ? "text-rose-400"
+                      : "text-zinc-400"
+                  )}
+                >
+                  {analysisMeta.aggregateSentiment || "Neutral"}
+                </div>
+                <div className="text-xs text-zinc-500">Overall</div>
+              </div>
             </div>
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
-              <div className="text-xs uppercase text-zinc-500">Stop</div>
-              <div className="font-semibold text-rose-300">{signal.stopLoss.toFixed(2)}</div>
-            </div>
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
-              <div className="text-xs uppercase text-zinc-500">Target</div>
-              <div className="font-semibold text-emerald-300">{signal.takeProfit.toFixed(2)}</div>
+            {/* Centered bar from neutral (50%) */}
+            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-800">
+              <div
+                className={cn("h-full", (analysisMeta.aggregateScore ?? 0) >= 0 ? "bg-emerald-500" : "bg-rose-500")}
+                style={{
+                  width: `${barPct}%`,
+                  marginLeft:
+                    (analysisMeta.aggregateScore ?? 0) >= 0
+                      ? "50%"
+                      : `${barLeft}%`, // visually expand left
+                  marginRight:
+                    (analysisMeta.aggregateScore ?? 0) < 0 ? "50%" : `${barRight}%`,
+                }}
+              />
             </div>
           </div>
         )}
 
-        {/* Rationale */}
-        {(analysisMeta?.chartReasons?.length || analysisMeta?.newsReasons?.length || signal.reason.length) && (
+        {/* Health */}
+        {signal.health !== "Healthy" && (
+          <div className="rounded-xl border border-yellow-800/40 bg-yellow-900/20 p-3">
+            <div className="flex items-center gap-2">
+              <span className="text-yellow-400">⚠️</span>
+              <div>
+                <div className="text-sm font-semibold text-yellow-200">System Status: {signal.health}</div>
+                <div className="text-xs text-yellow-300/80">Data may be limited in this window</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* News Items Analyzed */}
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+          <div className="flex items-center justify-between">
+            <div className="text-xs uppercase text-zinc-500">News Items Analyzed</div>
+            <div className="text-lg font-semibold text-zinc-200">{signal.count}</div>
+          </div>
+          <div className="mt-1 text-xs text-zinc-500">
+            Skew: {signal.skew.bullish} bullish vs {signal.skew.bearish} bearish • Source:{" "}
+            {signal.method === "stat" ? "STAT" : "Fallback"}
+          </div>
+        </div>
+
+        {/* Why */}
+        {(analysisMeta?.sentimentSummary || (analysisMeta?.newsReasons?.length ?? 0) > 0) && (
           <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">Why</div>
             {analysisMeta?.sentimentSummary && (
               <div className="mb-2 text-xs text-zinc-400">{analysisMeta.sentimentSummary}</div>
             )}
-            {analysisMeta?.chartReasons?.length ? (
-              <>
-                <div className="mb-1 text-xs uppercase text-zinc-500">Chart</div>
-                <ul className="ml-4 mb-2 list-disc space-y-1 text-sm text-zinc-300">
-                  {analysisMeta.chartReasons.map((r, i) => <li key={`c-${i}`}>{r}</li>)}
-                </ul>
-              </>
-            ) : null}
             {analysisMeta?.newsReasons?.length ? (
               <>
-                <div className="mb-1 text-xs uppercase text-zinc-500">News</div>
+                <div className="mb-1 text-xs uppercase text-zinc-500">News Drivers</div>
                 <ul className="ml-4 list-disc space-y-1 text-sm text-zinc-300">
-                  {analysisMeta.newsReasons.map((r, i) => <li key={`n-${i}`}>{r}</li>)}
+                  {analysisMeta.newsReasons.map((r, i) => (
+                    <li key={`n-${i}`}>{r}</li>
+                  ))}
                 </ul>
               </>
             ) : null}
-            {!analysisMeta?.chartReasons?.length && !analysisMeta?.newsReasons?.length && signal.reason.length ? (
-              <ul className="ml-4 list-disc space-y-1 text-sm text-zinc-300">
-                {signal.reason.map((r, idx) => (
-                  <li key={idx}>{r}</li>
-                ))}
-              </ul>
-            ) : null}
           </div>
         )}
-
-        {/* AI Chat */}
-        {chat && chat.length > 0 && (
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">AI Chat</div>
-            <div className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg bg-zinc-950/40 p-2 text-sm text-zinc-200">
-              {chat.map((m, idx) => (
-                <div key={idx} className="mb-2">
-                  <div className="text-xs text-zinc-500">{timeAgo(m.time)}</div>
-                  <div>{m.content}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Quick actions and meta removed for a clean UI */}
       </div>
     </section>
   );
-}
-function timeframeToInterval(tf: string): string {
-  switch (tf) {
-    case '15m':
-      return '15'
-    case '1h':
-      return '60'
-    case '4h':
-      return '240'
-    case '1d':
-      return 'D'
-    default:
-      return '60'
-  }
-}
-
-function getTvSymbol(ticker: string): string {
-  // Prefer USD pairs on Coinbase/Bitstamp where possible; fallback to Binance USDT pairs for non-USD listings
-  const map: Record<string, string> = {
-    BTC: 'COINBASE:BTCUSD',
-    ETH: 'COINBASE:ETHUSD',
-    BNB: 'BINANCE:BNBUSDT',
-    SOL: 'COINBASE:SOLUSD',
-    XRP: 'BITSTAMP:XRPUSD',
-    ADA: 'COINBASE:ADAUSD',
-    DOGE: 'BINANCE:DOGEUSDT',
-    AVAX: 'COINBASE:AVAXUSD',
-    TRX: 'BINANCE:TRXUSDT',
-    DOT: 'COINBASE:DOTUSD',
-    LINK: 'COINBASE:LINKUSD',
-    MATIC: 'COINBASE:MATICUSD',
-    LTC: 'COINBASE:LTCUSD',
-    BCH: 'COINBASE:BCHUSD',
-    TON: 'BINANCE:TONUSDT',
-    ARB: 'BINANCE:ARBUSDT',
-    OP: 'BINANCE:OPUSDT',
-    ATOM: 'COINBASE:ATOMUSD',
-    APT: 'BINANCE:APTUSDT',
-  }
-  return map[ticker] ?? `COINBASE:${ticker}USD`
 }
