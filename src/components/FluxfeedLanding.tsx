@@ -280,12 +280,12 @@ export default function FluxfeedLanding() {
                     )}
                   </div>
 
-                  <Link
-                    to="/app"
+                  <a
+                    href="https://app.fluxfeed.news/app"
                     className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-black shadow transition-all hover:bg-orange-500 hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-orange-600"
                   >
                     Launch App
-                  </Link>
+                  </a>
                 </div>
               ) : (
                 <>
@@ -295,12 +295,12 @@ export default function FluxfeedLanding() {
                   >
                     Sign In
                   </Link>
-                  <button
-                    onClick={() => navigate('/auth/login?redirect=/app')}
+                  <a
+                    href="https://app.fluxfeed.news/auth/login?redirect=/app"
                     className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-black shadow transition-all hover:bg-orange-500 hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-orange-600"
                   >
                     Launch App
-                  </button>
+                  </a>
                 </>
               )}
             </div>
@@ -323,19 +323,19 @@ export default function FluxfeedLanding() {
               </p>
               <div className="mt-6 flex flex-wrap items-center gap-3">
                 {user ? (
-                  <Link
-                    to="/app"
+                  <a
+                    href="https://app.fluxfeed.news/app"
                     className="rounded-xl bg-orange-600 px-5 py-3 text-sm font-semibold text-black shadow transition-all hover:bg-orange-500 hover:-translate-y-1 hover:shadow-lg hover:shadow-orange-600/20 focus:outline-none focus:ring-2 focus:ring-orange-600"
                   >
                     Launch App
-                  </Link>
+                  </a>
                 ) : (
-                  <button
-                    onClick={() => navigate('/auth/login?redirect=/app')}
+                  <a
+                    href="https://app.fluxfeed.news/auth/login?redirect=/app"
                     className="rounded-xl bg-orange-600 px-5 py-3 text-sm font-semibold text-black shadow transition-all hover:bg-orange-500 hover:-translate-y-1 hover:shadow-lg hover:shadow-orange-600/20 focus:outline-none focus:ring-2 focus:ring-orange-600"
                   >
                     Launch App
-                  </button>
+                  </a>
                 )}
                 <a
                   href="#features"
