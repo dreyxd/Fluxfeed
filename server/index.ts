@@ -24,6 +24,8 @@ type NewsItem = {
   tickers: string[]
   sentiment?: Sentiment
   score?: number
+  image_url?: string
+  text?: string
 }
 
 type AnalyzeRequest = {
@@ -543,24 +545,27 @@ app.get('/api/news/trending', async (req: Request, res: Response) => {
   try {
     if (!CRYPTONEWS_API_KEY) return res.json({ items: [] })
     const page = Math.max(1, Number(req.query.page || 1))
-    const url = `https://cryptonews-api.com/api/v1/trending-headlines?page=${page}&token=${CRYPTONEWS_API_KEY}`
+    const url = `https://cryptonews-api.com/api/v1/trending-headlines?&page=${page}&token=${CRYPTONEWS_API_KEY}`
     const resApi = await fetch(url)
     if (!resApi.ok) throw new Error(`CryptoNews trending error ${resApi.status}`)
     const data = await resApi.json() as any
-    const articles: any[] = data?.data || data?.news || []
+    const articles: any[] = data?.data || []
     const mapped: NewsItem[] = articles.map((a) => ({
-      id: String(a.news_url || a.id || a.url || (globalThis.crypto as any)?.randomUUID?.() || `${Date.now()}-${Math.random()}`),
-      title: a.title,
-      source: a.source_name || a.source || 'Unknown',
-      url: a.news_url || a.url,
+      id: String(a.id || a.news_id || `trending-${Date.now()}-${Math.random()}`),
+      title: a.headline || a.title || '',
+      source: a.source_name || a.source || 'CryptoNews',
+      url: a.news_url || a.url || `https://cryptonews-api.com/news/${a.news_id}`,
       publishedAt: a.date || a.published_at || new Date().toISOString(),
       tickers: Array.isArray(a.tickers) ? a.tickers : (typeof a.ticker === 'string' ? [a.ticker] : []),
+      image_url: a.image_url || a.thumbnail || '',
+      text: a.text || a.description || a.summary || '',
     }))
-    const filtered = mapped.filter(m => m.url && m.url.startsWith('http') && m.source && m.source !== 'Unknown')
+    const filtered = mapped.filter(m => m.title && m.title.length > 0)
     const labels = await classifySentimentOpenAI(filtered.map(r => r.title))
     const labeled = filtered.map((r, i) => ({ ...r, sentiment: labels[i]?.sentiment || 'bullish', score: labels[i]?.score ?? 0 }))
     res.json({ items: labeled })
   } catch (e: any) {
+    console.error('Trending news error:', e?.message || e)
     res.status(500).json({ error: e?.message || 'trending_error' })
   }
 })
@@ -574,20 +579,23 @@ app.get('/api/news/sundown', async (req: Request, res: Response) => {
     const resApi = await fetch(url)
     if (!resApi.ok) throw new Error(`CryptoNews sundown error ${resApi.status}`)
     const data = await resApi.json() as any
-    const articles: any[] = data?.data || data?.news || []
+    const articles: any[] = data?.data || []
     const mapped: NewsItem[] = articles.map((a) => ({
-      id: String(a.news_url || a.id || a.url || (globalThis.crypto as any)?.randomUUID?.() || `${Date.now()}-${Math.random()}`),
-      title: a.title,
-      source: a.source_name || a.source || 'Unknown',
-      url: a.news_url || a.url,
+      id: String(a.id || a.news_id || `sundown-${Date.now()}-${Math.random()}`),
+      title: a.headline || a.title || '',
+      source: a.source_name || a.source || 'CryptoNews',
+      url: a.news_url || a.url || `https://cryptonews-api.com/news/${a.news_id}`,
       publishedAt: a.date || a.published_at || new Date().toISOString(),
       tickers: Array.isArray(a.tickers) ? a.tickers : (typeof a.ticker === 'string' ? [a.ticker] : []),
+      image_url: a.image_url || a.thumbnail || '',
+      text: a.text || a.description || a.summary || '',
     }))
-    const filtered = mapped.filter(m => m.url && m.url.startsWith('http') && m.source && m.source !== 'Unknown')
+    const filtered = mapped.filter(m => m.title && m.title.length > 0)
     const labels = await classifySentimentOpenAI(filtered.map(r => r.title))
     const labeled = filtered.map((r, i) => ({ ...r, sentiment: labels[i]?.sentiment || 'bullish', score: labels[i]?.score ?? 0 }))
     res.json({ items: labeled })
   } catch (e: any) {
+    console.error('Sundown digest error:', e?.message || e)
     res.status(500).json({ error: e?.message || 'sundown_error' })
   }
 })

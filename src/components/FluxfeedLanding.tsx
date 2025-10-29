@@ -676,8 +676,6 @@ export default function FluxfeedLanding() {
               <h3 className="text-sm font-semibold text-zinc-100">Company</h3>
               <ul className="mt-4 space-y-2">
                 <li><Link to="/about" className="text-sm text-zinc-400 transition-colors hover:text-orange-400">About</Link></li>
-                <li><a href="https://x.com/fluxfeed" target="_blank" rel="noopener noreferrer" className="text-sm text-zinc-400 transition-colors hover:text-orange-400">Blog</a></li>
-                <li><a href="https://t.me/fluxfeed" target="_blank" rel="noopener noreferrer" className="text-sm text-zinc-400 transition-colors hover:text-orange-400">Contact</a></li>
               </ul>
             </div>
             {/* Column 3: Docs */}
@@ -933,15 +931,10 @@ function ExpandableNewsCard({
   onToggle: (id: string | null) => void
   accentColor: 'orange' | 'purple'
 }) {
-  const borderColor = accentColor === 'purple' ? 'border-purple-800/50' : 'border-orange-800/50'
-  const bgGradient = accentColor === 'purple' 
-    ? 'bg-gradient-to-br from-purple-950/20 to-zinc-900/40' 
-    : 'bg-gradient-to-br from-orange-950/20 to-zinc-900/40'
-
   return (
-    <div className={`rounded-2xl border ${borderColor} ${bgGradient} overflow-hidden`}>
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 overflow-hidden transition-all duration-300 hover:border-zinc-700 hover:bg-zinc-900/60 relative isolate">
       {/* Header */}
-      <div className="flex items-center justify-between gap-2 border-b border-zinc-800 px-4 py-3">
+      <div className="flex items-center justify-between gap-2 border-b border-zinc-800 px-4 py-3 bg-zinc-900/60">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-zinc-100">{title}</h3>
           {badge}
@@ -976,7 +969,7 @@ function ExpandableNewsCard({
             }, [isExpanded])
             
             return (
-              <li ref={itemRef} key={item.id} className="transition-colors hover:bg-zinc-900/60">
+              <li ref={itemRef} key={item.id} className="relative transition-colors hover:bg-zinc-900/60">
                 {/* Collapsed View */}
                 <button
                   onClick={() => onToggle(isExpanded ? null : item.id)}
@@ -1009,7 +1002,7 @@ function ExpandableNewsCard({
                 {/* Expanded Details */}
                 <div className={isExpanded ? 'news-card-expanded' : 'news-card-collapsed'}>
                   {isExpanded && (
-                    <div className="px-4 pb-4 space-y-4 border-t border-zinc-800/50 animate-slide-in">
+                    <div className="px-4 pb-4 space-y-4 border-t border-zinc-800/50 animate-slide-in bg-zinc-900/30">
                       {/* Image/Video if available */}
                       {item.image_url && (
                         <div className="mt-4 rounded-lg overflow-hidden border border-zinc-800">
@@ -1026,7 +1019,7 @@ function ExpandableNewsCard({
 
                       {/* Full Text/Description */}
                       {item.text && (
-                        <div className="text-sm text-zinc-300 leading-relaxed">
+                        <div className="text-sm text-zinc-300 leading-relaxed break-words whitespace-pre-wrap">
                           {item.text}
                         </div>
                       )}
