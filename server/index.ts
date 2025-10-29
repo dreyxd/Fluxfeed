@@ -587,6 +587,8 @@ app.get('/api/news/general', async (req: Request, res: Response) => {
       url: a.news_url || a.url,
       publishedAt: a.date || a.published_at || new Date().toISOString(),
       tickers: Array.isArray(a.tickers) ? a.tickers : (typeof a.ticker === 'string' ? [a.ticker] : []),
+      // Preserve the original CryptoNews sentiment
+      cryptoNewsSentiment: (a.sentiment || '').toLowerCase(),
     })
     
     const mappedPositive: NewsItem[] = articlesPositive.map(mapArticle)
@@ -597,19 +599,19 @@ app.get('/api/news/general', async (req: Request, res: Response) => {
     const filteredPositive = mappedPositive.filter(filterValid)
     const filteredNegative = mappedNegative.filter(filterValid)
     
-    // Classify sentiment with OpenAI for accurate scoring
+    // Use OpenAI only for scoring, preserve CryptoNews sentiment
     const labelsPositive = await classifySentimentOpenAI(filteredPositive.map(r => r.title))
     const labelsNegative = await classifySentimentOpenAI(filteredNegative.map(r => r.title))
     
     const labeledPositive = filteredPositive.map((r, i) => ({ 
       ...r, 
-      sentiment: labelsPositive[i]?.sentiment || 'bullish', 
+      sentiment: 'bullish' as const, // Force bullish for positive news
       score: labelsPositive[i]?.score ?? 0.3 
     }))
     
     const labeledNegative = filteredNegative.map((r, i) => ({ 
       ...r, 
-      sentiment: labelsNegative[i]?.sentiment || 'bearish', 
+      sentiment: 'bearish' as const, // Force bearish for negative news
       score: labelsNegative[i]?.score ?? -0.3 
     }))
     
@@ -632,12 +634,27 @@ app.get('/api/news/trending', async (req: Request, res: Response) => {
   try {
     if (!CRYPTONEWS_API_KEY) return res.json({ items: [] })
     const page = Math.max(1, Number(req.query.page || 1))
-    const url = `https://cryptonews-api.com/api/v1/trending-headlines?&page=${page}&token=${CRYPTONEWS_API_KEY}`
-    const resApi = await fetch(url)
-    if (!resApi.ok) throw new Error(`CryptoNews trending error ${resApi.status}`)
-    const data = await resApi.json() as any
-    const articles: any[] = data?.data || []
-    const mapped: NewsItem[] = articles.map((a) => ({
+    const itemsPerSentiment = 5
+    
+    // Fetch both positive and negative trending headlines
+    const urlPositive = `https://cryptonews-api.com/api/v1/trending-headlines?page=${page}&sentiment=positive&token=${CRYPTONEWS_API_KEY}`
+    const urlNegative = `https://cryptonews-api.com/api/v1/trending-headlines?page=${page}&sentiment=negative&token=${CRYPTONEWS_API_KEY}`
+    
+    const [resPositive, resNegative] = await Promise.all([
+      fetch(urlPositive),
+      fetch(urlNegative)
+    ])
+    
+    if (!resPositive.ok) throw new Error(`CryptoNews trending positive error ${resPositive.status}`)
+    if (!resNegative.ok) throw new Error(`CryptoNews trending negative error ${resNegative.status}`)
+    
+    const dataPositive = await resPositive.json() as any
+    const dataNegative = await resNegative.json() as any
+    
+    const articlesPositive: any[] = dataPositive?.data || []
+    const articlesNegative: any[] = dataNegative?.data || []
+    
+    const mapArticle = (a: any) => ({
       id: String(a.id || a.news_id || `trending-${Date.now()}-${Math.random()}`),
       title: a.headline || a.title || '',
       source: a.source_name || a.source || 'CryptoNews',
@@ -646,11 +663,27 @@ app.get('/api/news/trending', async (req: Request, res: Response) => {
       tickers: Array.isArray(a.tickers) ? a.tickers : (typeof a.ticker === 'string' ? [a.ticker] : []),
       image_url: a.image_url || a.thumbnail || '',
       text: a.text || a.description || a.summary || '',
-    }))
-    const filtered = mapped.filter(m => m.title && m.title.length > 0)
-    const labels = await classifySentimentOpenAI(filtered.map(r => r.title))
-    const labeled = filtered.map((r, i) => ({ ...r, sentiment: labels[i]?.sentiment || 'bullish', score: labels[i]?.score ?? 0 }))
-    res.json({ items: labeled })
+    })
+    
+    const mappedPositive = articlesPositive.slice(0, itemsPerSentiment).map(mapArticle).filter(m => m.title && m.title.length > 0)
+    const mappedNegative = articlesNegative.slice(0, itemsPerSentiment).map(mapArticle).filter(m => m.title && m.title.length > 0)
+    
+    // Get scores from OpenAI but preserve sentiment
+    const labelsPositive = await classifySentimentOpenAI(mappedPositive.map(r => r.title))
+    const labelsNegative = await classifySentimentOpenAI(mappedNegative.map(r => r.title))
+    
+    const labeledPositive = mappedPositive.map((r, i) => ({ ...r, sentiment: 'bullish' as const, score: labelsPositive[i]?.score ?? 0.3 }))
+    const labeledNegative = mappedNegative.map((r, i) => ({ ...r, sentiment: 'bearish' as const, score: labelsNegative[i]?.score ?? -0.3 }))
+    
+    // Mix them together
+    const mixed: NewsItem[] = []
+    const maxLen = Math.max(labeledPositive.length, labeledNegative.length)
+    for (let i = 0; i < maxLen; i++) {
+      if (i < labeledPositive.length) mixed.push(labeledPositive[i])
+      if (i < labeledNegative.length) mixed.push(labeledNegative[i])
+    }
+    
+    res.json({ items: mixed })
   } catch (e: any) {
     console.error('Trending news error:', e?.message || e)
     res.status(500).json({ error: e?.message || 'trending_error' })
