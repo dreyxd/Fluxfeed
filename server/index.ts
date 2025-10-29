@@ -546,43 +546,82 @@ app.get('/api/news/general', async (req: Request, res: Response) => {
   try {
     if (!CRYPTONEWS_API_KEY) return res.json({ items: [] })
     const totalItems = Math.min(100, Number(req.query.items || 12))
+    const itemsPerSentiment = Math.ceil(totalItems / 2)
     const page = Math.max(1, Number(req.query.page || 1))
     
-    // Fetch general news - no sentiment filter to avoid 422 errors
-    const url = new URL('https://cryptonews-api.com/api/v1')
-    url.searchParams.set('tickers', 'BTC,ETH,BNB,SOL,XRP')
-    url.searchParams.set('items', String(totalItems))
-    url.searchParams.set('page', String(page))
-    url.searchParams.set('token', CRYPTONEWS_API_KEY)
+    // Fetch both positive and negative sentiment news for balanced feed
+    const urlPositive = new URL('https://cryptonews-api.com/api/v1')
+    urlPositive.searchParams.set('tickers', 'BTC,ETH,BNB,SOL,XRP')
+    urlPositive.searchParams.set('items', String(itemsPerSentiment))
+    urlPositive.searchParams.set('page', String(page))
+    urlPositive.searchParams.set('sentiment', 'positive')
+    urlPositive.searchParams.set('token', CRYPTONEWS_API_KEY)
     
-    const res2 = await fetch(url.toString())
-    if (!res2.ok) throw new Error(`CryptoNews error ${res2.status}`)
+    const urlNegative = new URL('https://cryptonews-api.com/api/v1')
+    urlNegative.searchParams.set('tickers', 'BTC,ETH,BNB,SOL,XRP')
+    urlNegative.searchParams.set('items', String(itemsPerSentiment))
+    urlNegative.searchParams.set('page', String(page))
+    urlNegative.searchParams.set('sentiment', 'negative')
+    urlNegative.searchParams.set('token', CRYPTONEWS_API_KEY)
     
-    const data = await res2.json() as any
-    const articles: any[] = data?.data || data?.news || []
+    // Fetch both in parallel
+    const [resPositive, resNegative] = await Promise.all([
+      fetch(urlPositive.toString()),
+      fetch(urlNegative.toString())
+    ])
     
-    // Map articles - simplified single call
-    const mapped: NewsItem[] = articles.map((a) => ({
+    if (!resPositive.ok) throw new Error(`CryptoNews positive error ${resPositive.status}`)
+    if (!resNegative.ok) throw new Error(`CryptoNews negative error ${resNegative.status}`)
+    
+    const dataPositive = await resPositive.json() as any
+    const dataNegative = await resNegative.json() as any
+    
+    const articlesPositive: any[] = dataPositive?.data || dataPositive?.news || []
+    const articlesNegative: any[] = dataNegative?.data || dataNegative?.news || []
+    
+    // Map both sets of articles
+    const mapArticle = (a: any) => ({
       id: String(a.news_url || a.id || a.url || (globalThis.crypto as any)?.randomUUID?.() || `${Date.now()}-${Math.random()}`),
       title: a.title,
       source: a.source_name || a.source || 'Unknown',
       url: a.news_url || a.url,
       publishedAt: a.date || a.published_at || new Date().toISOString(),
       tickers: Array.isArray(a.tickers) ? a.tickers : (typeof a.ticker === 'string' ? [a.ticker] : []),
-    }))
+    })
+    
+    const mappedPositive: NewsItem[] = articlesPositive.map(mapArticle)
+    const mappedNegative: NewsItem[] = articlesNegative.map(mapArticle)
     
     // Filter valid articles
-    const filtered = mapped.filter(m => m.url && m.url.startsWith('http') && m.source && m.source !== 'Unknown')
+    const filterValid = (m: NewsItem) => m.url && m.url.startsWith('http') && m.source && m.source !== 'Unknown'
+    const filteredPositive = mappedPositive.filter(filterValid)
+    const filteredNegative = mappedNegative.filter(filterValid)
     
-    // Classify sentiment with OpenAI
-    const labels = await classifySentimentOpenAI(filtered.map(r => r.title))
-    const labeled = filtered.map((r, i) => ({ 
+    // Classify sentiment with OpenAI for accurate scoring
+    const labelsPositive = await classifySentimentOpenAI(filteredPositive.map(r => r.title))
+    const labelsNegative = await classifySentimentOpenAI(filteredNegative.map(r => r.title))
+    
+    const labeledPositive = filteredPositive.map((r, i) => ({ 
       ...r, 
-      sentiment: labels[i]?.sentiment || 'bullish', 
-      score: labels[i]?.score ?? 0 
+      sentiment: labelsPositive[i]?.sentiment || 'bullish', 
+      score: labelsPositive[i]?.score ?? 0.3 
     }))
     
-    res.json({ items: labeled })
+    const labeledNegative = filteredNegative.map((r, i) => ({ 
+      ...r, 
+      sentiment: labelsNegative[i]?.sentiment || 'bearish', 
+      score: labelsNegative[i]?.score ?? -0.3 
+    }))
+    
+    // Mix them together for balanced bullish/bearish feed
+    const mixed: NewsItem[] = []
+    const maxLen = Math.max(labeledPositive.length, labeledNegative.length)
+    for (let i = 0; i < maxLen; i++) {
+      if (i < labeledPositive.length) mixed.push(labeledPositive[i])
+      if (i < labeledNegative.length) mixed.push(labeledNegative[i])
+    }
+    
+    res.json({ items: mixed })
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'general_error' })
   }
