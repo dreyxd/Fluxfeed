@@ -197,7 +197,7 @@ export default function FluxfeedSignals() {
       try {
         const mins = windowToMinutes(windowSel);
         const res = await fetch(
-          `/api/signal?ticker=${encodeURIComponent(ticker)}&tf=${encodeURIComponent(timeframe)}&since=${mins}&window=${encodeURIComponent(windowSel)}`
+          `${API_BASE_URL}/api/signal?ticker=${encodeURIComponent(ticker)}&tf=${encodeURIComponent(timeframe)}&since=${mins}&window=${encodeURIComponent(windowSel)}`
         );
         const json = await res.json();
         if (cancelled) return;
