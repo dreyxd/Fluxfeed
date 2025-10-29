@@ -1,4 +1,17 @@
 {
+  "redirects": [
+    {
+      "source": "/",
+      "has": [
+        {
+          "type": "host",
+          "value": "app.fluxfeed.news"
+        }
+      ],
+      "destination": "/app",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",
