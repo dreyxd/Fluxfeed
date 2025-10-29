@@ -102,6 +102,9 @@ export default function FluxfeedLanding() {
           publishedAt: r.publishedAt,
         }))
         
+        // Sort by publishedAt descending (newest first)
+        mapped.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+        
         setGeneralNews(mapped)
       } catch {}
     }
@@ -124,6 +127,9 @@ export default function FluxfeedLanding() {
           publishedAt: r.publishedAt,
         }))
         
+        // Sort by publishedAt descending (newest first)
+        mapped.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+        
         setTrendingNews(mapped)
       } catch {}
     }
@@ -145,6 +151,9 @@ export default function FluxfeedLanding() {
           text: r.text,
           publishedAt: r.publishedAt,
         }))
+        
+        // Sort by publishedAt descending (newest first)
+        mapped.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
         
         setSundownNews(mapped)
       } catch {}
