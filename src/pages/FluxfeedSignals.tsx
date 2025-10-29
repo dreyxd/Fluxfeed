@@ -279,7 +279,7 @@ export default function FluxfeedSignals() {
         <div className="mx-auto max-w-7xl px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
-              to="/"
+              to="/app"
               className="flex items-center gap-3 rounded-lg transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-orange-600"
             >
               <Logo size={48} />

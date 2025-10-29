@@ -32,11 +32,18 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  // Detect if we're on app subdomain
+  const isAppSubdomain = typeof window !== 'undefined' && window.location.hostname === 'app.fluxfeed.news'
+  
   return (
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          <Route path="/" element={<FluxfeedLanding />} />
+          {/* On app subdomain, redirect root to /app; otherwise show landing */}
+          <Route 
+            path="/" 
+            element={isAppSubdomain ? <Navigate to="/app" replace /> : <FluxfeedLanding />} 
+          />
           <Route path="/auth/login" element={<Login />} />
           <Route path="/auth/register" element={<Register />} />
           <Route
@@ -47,13 +54,35 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          <Route path="/about" element={<About />} />
-          <Route path="/changelog" element={<Changelog />} />
-          <Route path="/pricing" element={<Pricing />} />
-          <Route path="/token" element={<Token />} />
-          <Route path="/docs/getting-started" element={<GettingStarted />} />
-          <Route path="/docs/terms" element={<Terms />} />
-          <Route path="/docs/privacy" element={<Privacy />} />
+          {/* Redirect marketing pages to /app on app subdomain */}
+          <Route 
+            path="/about" 
+            element={isAppSubdomain ? <Navigate to="/app" replace /> : <About />} 
+          />
+          <Route 
+            path="/changelog" 
+            element={isAppSubdomain ? <Navigate to="/app" replace /> : <Changelog />} 
+          />
+          <Route 
+            path="/pricing" 
+            element={isAppSubdomain ? <Navigate to="/app" replace /> : <Pricing />} 
+          />
+          <Route 
+            path="/token" 
+            element={isAppSubdomain ? <Navigate to="/app" replace /> : <Token />} 
+          />
+          <Route 
+            path="/docs/getting-started" 
+            element={isAppSubdomain ? <Navigate to="/app" replace /> : <GettingStarted />} 
+          />
+          <Route 
+            path="/docs/terms" 
+            element={isAppSubdomain ? <Navigate to="/app" replace /> : <Terms />} 
+          />
+          <Route 
+            path="/docs/privacy" 
+            element={isAppSubdomain ? <Navigate to="/app" replace /> : <Privacy />} 
+          />
         </Routes>
       </AuthProvider>
     </BrowserRouter>
