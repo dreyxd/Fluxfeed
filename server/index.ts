@@ -549,15 +549,15 @@ app.get('/api/news/general', async (req: Request, res: Response) => {
     const page = Math.max(1, Number(req.query.page || 1))
     
     // Fetch both positive and negative sentiment news
-    const urlPositive = new URL('https://cryptonews-api.com/api/v1/category')
-    urlPositive.searchParams.set('section', 'general')
+    const urlPositive = new URL('https://cryptonews-api.com/api/v1')
+    urlPositive.searchParams.set('tickers', 'BTC,ETH,BNB,SOL,XRP')
     urlPositive.searchParams.set('items', String(itemsPerSentiment))
     urlPositive.searchParams.set('page', String(page))
     urlPositive.searchParams.set('sentiment', 'positive')
     urlPositive.searchParams.set('token', CRYPTONEWS_API_KEY)
     
-    const urlNegative = new URL('https://cryptonews-api.com/api/v1/category')
-    urlNegative.searchParams.set('section', 'general')
+    const urlNegative = new URL('https://cryptonews-api.com/api/v1')
+    urlNegative.searchParams.set('tickers', 'BTC,ETH,BNB,SOL,XRP')
     urlNegative.searchParams.set('items', String(itemsPerSentiment))
     urlNegative.searchParams.set('page', String(page))
     urlNegative.searchParams.set('sentiment', 'negative')
