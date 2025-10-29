@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import TradingViewChart from "../components/TradingViewChart";
 import Logo from "../components/Logo";
 import { Link, useSearchParams } from "react-router-dom";
+import API_BASE_URL from "../config/api";
 
 // ----------------------------- Utility Types -----------------------------
 
@@ -154,7 +155,7 @@ export default function FluxfeedSignals() {
     const load = async () => {
       try {
         const mins = windowToMinutes(windowSel);
-        const res = await fetch(`/api/news?ticker=${encodeURIComponent(ticker)}&since=${mins}`);
+        const res = await fetch(`${API_BASE_URL}/api/news?ticker=${encodeURIComponent(ticker)}&since=${mins}`);
         const json = await res.json();
         if (cancelled) return;
         const items: NewsItem[] = (json.items || []).map((r: any) => ({
@@ -368,6 +369,24 @@ export default function FluxfeedSignals() {
           </div>
         </div>
       </header>
+
+      {/* Demo Banner */}
+      <div className="border-b border-orange-900/30 bg-gradient-to-r from-orange-950/20 via-orange-900/10 to-orange-950/20">
+        <div className="mx-auto max-w-7xl px-4 py-3">
+          <div className="flex items-center justify-center gap-3 text-center">
+            <div className="flex items-center gap-2">
+              <svg className="h-5 w-5 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="text-sm font-semibold text-orange-300">DEMO MODE</span>
+            </div>
+            <span className="hidden text-sm text-zinc-400 sm:inline">•</span>
+            <p className="text-sm text-zinc-400">
+              This platform is currently under active development. Features and data may be limited or experimental.
+            </p>
+          </div>
+        </div>
+      </div>
 
       {/* Chart */}
       <section aria-label="Chart" className="border-b border-zinc-900/60">

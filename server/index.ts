@@ -2,15 +2,48 @@ import 'dotenv/config'
 import express from 'express'
 import type { Request, Response } from 'express'
 import cors from 'cors'
+import cookieParser from 'cookie-parser'
+import authRoutes from './routes/auth.js'
+import waitlistRoutes from './routes/waitlist.js'
+import pool from './db.js'
 
 const PORT = Number(process.env.PORT || 8787)
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini'
 const CRYPTONEWS_API_KEY = process.env.CRYPTONEWS_API_KEY || ''
 
+// Allowed origins for CORS
+const allowedOrigins = [
+  'http://localhost:5173',           // Development
+  'https://fluxfeed.news',            // Production main
+  'https://www.fluxfeed.news',        // Production www
+  'https://app.fluxfeed.news',        // Production app subdomain
+]
+
 const app = express()
-app.use(cors())
+
+// CORS configuration
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true)
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true)
+    } else {
+      callback(new Error('Not allowed by CORS'))
+    }
+  },
+  credentials: true, // Allow cookies
+}))
+
 app.use(express.json())
+app.use(cookieParser())
+
+// Auth routes
+app.use('/api/auth', authRoutes)
+// Waitlist routes
+app.use('/api/waitlist', waitlistRoutes)
 
 // ----------------------------- Types & Utils -----------------------------
 
@@ -512,29 +545,82 @@ app.get('/api/stat/general', async (req: Request, res: Response) => {
 app.get('/api/news/general', async (req: Request, res: Response) => {
   try {
     if (!CRYPTONEWS_API_KEY) return res.json({ items: [] })
-    const items = Math.min(100, Number(req.query.items || 12))
+    const itemsPerSentiment = Math.min(50, Math.floor(Number(req.query.items || 12) / 2))
     const page = Math.max(1, Number(req.query.page || 1))
-    const url = new URL('https://cryptonews-api.com/api/v1/category')
-    url.searchParams.set('section', 'general')
-    url.searchParams.set('items', String(items))
-    url.searchParams.set('page', String(page))
-    url.searchParams.set('token', CRYPTONEWS_API_KEY)
-    const resApi = await fetch(url.toString())
-    if (!resApi.ok) throw new Error(`CryptoNews general error ${resApi.status}`)
-    const data = await resApi.json() as any
-    const articles: any[] = data?.data || data?.news || []
-    const mapped: NewsItem[] = articles.map((a) => ({
+    
+    // Fetch both positive and negative sentiment news
+    const urlPositive = new URL('https://cryptonews-api.com/api/v1/category')
+    urlPositive.searchParams.set('section', 'general')
+    urlPositive.searchParams.set('items', String(itemsPerSentiment))
+    urlPositive.searchParams.set('page', String(page))
+    urlPositive.searchParams.set('sentiment', 'positive')
+    urlPositive.searchParams.set('token', CRYPTONEWS_API_KEY)
+    
+    const urlNegative = new URL('https://cryptonews-api.com/api/v1/category')
+    urlNegative.searchParams.set('section', 'general')
+    urlNegative.searchParams.set('items', String(itemsPerSentiment))
+    urlNegative.searchParams.set('page', String(page))
+    urlNegative.searchParams.set('sentiment', 'negative')
+    urlNegative.searchParams.set('token', CRYPTONEWS_API_KEY)
+    
+    // Fetch both in parallel
+    const [resPositive, resNegative] = await Promise.all([
+      fetch(urlPositive.toString()),
+      fetch(urlNegative.toString())
+    ])
+    
+    if (!resPositive.ok) throw new Error(`CryptoNews positive error ${resPositive.status}`)
+    if (!resNegative.ok) throw new Error(`CryptoNews negative error ${resNegative.status}`)
+    
+    const dataPositive = await resPositive.json() as any
+    const dataNegative = await resNegative.json() as any
+    
+    const articlesPositive: any[] = dataPositive?.data || dataPositive?.news || []
+    const articlesNegative: any[] = dataNegative?.data || dataNegative?.news || []
+    
+    // Map both sets of articles
+    const mapArticle = (a: any) => ({
       id: String(a.news_url || a.id || a.url || (globalThis.crypto as any)?.randomUUID?.() || `${Date.now()}-${Math.random()}`),
       title: a.title,
       source: a.source_name || a.source || 'Unknown',
       url: a.news_url || a.url,
       publishedAt: a.date || a.published_at || new Date().toISOString(),
       tickers: Array.isArray(a.tickers) ? a.tickers : (typeof a.ticker === 'string' ? [a.ticker] : []),
+    })
+    
+    const mappedPositive: NewsItem[] = articlesPositive.map(mapArticle)
+    const mappedNegative: NewsItem[] = articlesNegative.map(mapArticle)
+    
+    // Filter valid articles
+    const filterValid = (m: NewsItem) => m.url && m.url.startsWith('http') && m.source && m.source !== 'Unknown'
+    const filteredPositive = mappedPositive.filter(filterValid)
+    const filteredNegative = mappedNegative.filter(filterValid)
+    
+    // Classify sentiment with OpenAI
+    const labelsPositive = await classifySentimentOpenAI(filteredPositive.map(r => r.title))
+    const labelsNegative = await classifySentimentOpenAI(filteredNegative.map(r => r.title))
+    
+    const labeledPositive = filteredPositive.map((r, i) => ({ 
+      ...r, 
+      sentiment: labelsPositive[i]?.sentiment || 'bullish', 
+      score: labelsPositive[i]?.score ?? 0.3 
     }))
-    const filtered = mapped.filter(m => m.url && m.url.startsWith('http') && m.source && m.source !== 'Unknown')
-    const labels = await classifySentimentOpenAI(filtered.map(r => r.title))
-    const labeled = filtered.map((r, i) => ({ ...r, sentiment: labels[i]?.sentiment || 'bullish', score: labels[i]?.score ?? 0 }))
-    res.json({ items: labeled })
+    
+    const labeledNegative = filteredNegative.map((r, i) => ({ 
+      ...r, 
+      sentiment: labelsNegative[i]?.sentiment || 'bearish', 
+      score: labelsNegative[i]?.score ?? -0.3 
+    }))
+    
+    // Mix them together by alternating (bullish, bearish, bullish, bearish...)
+    const mixed: NewsItem[] = []
+    const maxLen = Math.max(labeledPositive.length, labeledNegative.length)
+    for (let i = 0; i < maxLen; i++) {
+      if (i < labeledPositive.length) mixed.push(labeledPositive[i])
+      if (i < labeledNegative.length) mixed.push(labeledNegative[i])
+    }
+    
+    res.json({ items: mixed })
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'general_error' })
   }

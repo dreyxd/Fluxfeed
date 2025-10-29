@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import Logo from "./Logo";
 import InteractiveBackground from "./InteractiveBackground";
+import { useAuth } from "../contexts/AuthContext";
+import API_BASE_URL from "../config/api";
 
 // Fluxfeed Landing Page
 // - Enhanced with smooth scroll animations, navbar scroll effects
@@ -42,7 +44,10 @@ export default function FluxfeedLanding() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [scrolled, setScrolled] = useState(false)
+  const [showProfileMenu, setShowProfileMenu] = useState(false)
   const observerRef = useRef<IntersectionObserver | null>(null)
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
 
   // Scroll detection for navbar
   useEffect(() => {
@@ -81,7 +86,7 @@ export default function FluxfeedLanding() {
     
     async function loadGeneral() {
       try {
-        const res = await fetch(`/api/news/general?items=6`)
+        const res = await fetch(`${API_BASE_URL}/api/news/general?items=6`)
         const json = await res.json()
         if (cancelled) return
         
@@ -103,7 +108,7 @@ export default function FluxfeedLanding() {
 
     async function loadTrending() {
       try {
-        const res = await fetch(`/api/news/trending?page=1`)
+        const res = await fetch(`${API_BASE_URL}/api/news/trending?page=1`)
         const json = await res.json()
         if (cancelled) return
         
@@ -125,7 +130,7 @@ export default function FluxfeedLanding() {
 
     async function loadSundown() {
       try {
-        const res = await fetch(`/api/news/sundown?page=1`)
+        const res = await fetch(`${API_BASE_URL}/api/news/sundown?page=1`)
         const json = await res.json()
         if (cancelled) return
         
@@ -202,11 +207,102 @@ export default function FluxfeedLanding() {
                 Pricing
               </Link>
               <Link
-                to="/app"
-                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-black shadow transition-all hover:bg-orange-500 hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-orange-600"
+                to="/token"
+                className="hidden rounded-lg px-3 py-1.5 text-sm font-semibold text-orange-500 transition-colors hover:text-orange-400 md:inline"
               >
-                Launch App
+                Token
               </Link>
+              
+              {/* Auth buttons */}
+              {user ? (
+                <div className="flex items-center gap-2">
+                  {/* Profile Dropdown */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowProfileMenu(!showProfileMenu)}
+                      className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm font-semibold text-zinc-200 transition-all hover:bg-zinc-800"
+                    >
+                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-orange-500/20 text-orange-400">
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                      </div>
+                      <svg className={`h-4 w-4 transition-transform ${showProfileMenu ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+
+                    {/* Dropdown Menu */}
+                    {showProfileMenu && (
+                      <>
+                        {/* Backdrop */}
+                        <div 
+                          className="fixed inset-0 z-40" 
+                          onClick={() => setShowProfileMenu(false)}
+                        />
+                        
+                        {/* Menu */}
+                        <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-zinc-800 bg-zinc-900 shadow-lg">
+                          <div className="border-b border-zinc-800 p-4">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-500/20 text-orange-400">
+                                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                </svg>
+                              </div>
+                              <div className="flex-1 overflow-hidden">
+                                <p className="truncate text-sm font-semibold text-zinc-200">
+                                  {user.fullName || 'User'}
+                                </p>
+                                <p className="truncate text-xs text-zinc-400">
+                                  {user.email}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="p-2">
+                            <button
+                              onClick={() => {
+                                setShowProfileMenu(false)
+                                logout()
+                              }}
+                              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                            >
+                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                              </svg>
+                              Logout
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <Link
+                    to="/app"
+                    className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-black shadow transition-all hover:bg-orange-500 hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-orange-600"
+                  >
+                    Launch App
+                  </Link>
+                </div>
+              ) : (
+                <>
+                  <Link
+                    to="/auth/login"
+                    className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-2 text-sm font-semibold text-zinc-200 transition-all hover:bg-zinc-800"
+                  >
+                    Sign In
+                  </Link>
+                  <button
+                    onClick={() => navigate('/auth/login?redirect=/app')}
+                    className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-black shadow transition-all hover:bg-orange-500 hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-orange-600"
+                  >
+                    Launch App
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -226,12 +322,21 @@ export default function FluxfeedLanding() {
                 Filter by ticker and timeframe, see context instantly, and act with confidence.
               </p>
               <div className="mt-6 flex flex-wrap items-center gap-3">
-                <Link
-                  to="/app"
-                  className="rounded-xl bg-orange-600 px-5 py-3 text-sm font-semibold text-black shadow transition-all hover:bg-orange-500 hover:-translate-y-1 hover:shadow-lg hover:shadow-orange-600/20 focus:outline-none focus:ring-2 focus:ring-orange-600"
-                >
-                  Launch App
-                </Link>
+                {user ? (
+                  <Link
+                    to="/app"
+                    className="rounded-xl bg-orange-600 px-5 py-3 text-sm font-semibold text-black shadow transition-all hover:bg-orange-500 hover:-translate-y-1 hover:shadow-lg hover:shadow-orange-600/20 focus:outline-none focus:ring-2 focus:ring-orange-600"
+                  >
+                    Launch App
+                  </Link>
+                ) : (
+                  <button
+                    onClick={() => navigate('/auth/login?redirect=/app')}
+                    className="rounded-xl bg-orange-600 px-5 py-3 text-sm font-semibold text-black shadow transition-all hover:bg-orange-500 hover:-translate-y-1 hover:shadow-lg hover:shadow-orange-600/20 focus:outline-none focus:ring-2 focus:ring-orange-600"
+                  >
+                    Launch App
+                  </button>
+                )}
                 <a
                   href="#features"
                   className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-5 py-3 text-sm font-semibold text-zinc-200 transition-all hover:bg-zinc-800 hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-orange-600"
