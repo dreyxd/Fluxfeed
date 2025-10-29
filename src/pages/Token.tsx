@@ -384,7 +384,7 @@ const Token: React.FC = () => {
               Discord
             </a>
             <a
-              href="https://t.me/fluxfeed"
+              href="https://t.me/fluxfeed_portal"
               target="_blank"
               rel="noopener noreferrer"
               className="bg-gray-900/50 border border-orange-900/30 hover:border-orange-500 rounded-xl px-6 py-3 text-white hover:text-orange-500 transition-colors flex items-center gap-2"

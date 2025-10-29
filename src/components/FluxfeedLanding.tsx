@@ -643,7 +643,7 @@ export default function FluxfeedLanding() {
             </div>
           </div>
           <div className="mt-10 text-center">
-            <a href="https://t.me/fluxfeed" target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-orange-400 hover:text-orange-300">
+            <a href="https://t.me/fluxfeed_portal" target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-orange-400 hover:text-orange-300">
               Suggest a feature on Telegram &rarr;
             </a>
           </div>
@@ -698,7 +698,7 @@ export default function FluxfeedLanding() {
             </div>
           </div>
           <div className="mt-10 text-center">
-            <a href="https://t.me/fluxfeed" target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-orange-400 hover:text-orange-300">
+            <a href="https://t.me/fluxfeed_portal" target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-orange-400 hover:text-orange-300">
               Share your feedback on Telegram &rarr;
             </a>
           </div>
@@ -798,7 +798,7 @@ export default function FluxfeedLanding() {
               <h3 className="text-sm font-semibold text-zinc-100">Community</h3>
               <ul className="mt-4 space-y-2">
                 <li><a href="https://x.com/fluxfeed" target="_blank" rel="noopener noreferrer" className="text-sm text-zinc-400 transition-colors hover:text-orange-400">X / Twitter</a></li>
-                <li><a href="https://t.me/fluxfeed" target="_blank" rel="noopener noreferrer" className="text-sm text-zinc-400 transition-colors hover:text-orange-400">Telegram</a></li>
+                <li><a href="https://t.me/fluxfeed_portal" target="_blank" rel="noopener noreferrer" className="text-sm text-zinc-400 transition-colors hover:text-orange-400">Telegram</a></li>
               </ul>
             </div>
           </div>

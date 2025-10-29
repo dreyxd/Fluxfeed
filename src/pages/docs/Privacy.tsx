@@ -153,7 +153,7 @@ export default function Privacy() {
             </ul>
             <p className="mt-3">
               To exercise these rights, contact us via{" "}
-              <a href="https://t.me/fluxfeed" target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 underline">
+              <a href="https://t.me/fluxfeed_portal" target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 underline">
                 Telegram
               </a>.
             </p>
@@ -180,7 +180,7 @@ export default function Privacy() {
             <h2 className="text-2xl font-bold text-zinc-100">11. Contact Us</h2>
             <p className="mt-3">
               If you have questions or concerns about this Privacy Policy, please reach out via{" "}
-              <a href="https://t.me/fluxfeed" target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 underline">
+              <a href="https://t.me/fluxfeed_portal" target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 underline">
                 Telegram
               </a>{" "}
               or{" "}

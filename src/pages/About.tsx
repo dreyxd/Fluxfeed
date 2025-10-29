@@ -65,7 +65,7 @@ export default function About() {
           <p>
             We're actively building in public and love feedback from traders, developers, and quants. 
             Join our community on{" "}
-            <a href="https://t.me/fluxfeed" target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 underline">
+            <a href="https://t.me/fluxfeed_portal" target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 underline">
               Telegram
             </a>{" "}
             or follow us on{" "}

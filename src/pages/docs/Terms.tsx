@@ -136,7 +136,7 @@ export default function Terms() {
             <h2 className="text-2xl font-bold text-zinc-100">10. Contact</h2>
             <p className="mt-3">
               For questions about these Terms, please contact us via{" "}
-              <a href="https://t.me/fluxfeed" target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 underline">
+              <a href="https://t.me/fluxfeed_portal" target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 underline">
                 Telegram
               </a>{" "}
               or{" "}
